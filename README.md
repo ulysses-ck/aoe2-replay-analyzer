@@ -55,9 +55,16 @@ El parser vive en un worker thread por dos motivos concretos:
 2. **Parsear ~500k operaciones bloquea el event loop** más de un segundo; en un
    worker el resto de los requests sigue respondiendo.
 
-El worker se carga por ruta (`process.cwd()/workers/parse-replay.mjs`), no por
-import: el bundler no puede seguirlo y el archivo tiene que existir tal cual en el
-deploy. Si algún día esto va a serverless, hay que empaquetarlo aparte.
+El worker se referencia por ruta (`process.cwd()/workers/parse-replay.mjs`) para que
+el código fuente sea el que corre en desarrollo, pero **Turbopack detecta el
+`new Worker(...)` y además lo compila como entry propio** en el build de producción.
+Consecuencia práctica: tocás `workers/parse-replay.mjs` y en `pnpm dev` se ve al
+toque, pero con `pnpm build && pnpm start` hace falta reconstruir, porque el server
+ejecuta el chunk emitido, no el archivo fuente.
+
+Como el panic hook de Rust escribe el backtrace directo a `stderr` (no pasa por
+`console.error`), el worker tapa `process.stderr.write` mientras intenta `aoe2rec`.
+Sin eso, un replay inválido metía ~110 KB de backtrace en el log por request.
 
 ### Dos motores
 

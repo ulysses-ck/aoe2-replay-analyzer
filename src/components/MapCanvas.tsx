@@ -49,10 +49,14 @@ function viewForTile(
 function readViewParams(): ViewParams | null {
   if (typeof window === "undefined") return null;
   const params = new URLSearchParams(window.location.search);
-  const x = Number(params.get("x"));
-  const y = Number(params.get("y"));
-  const z = Number(params.get("z"));
+  const rawX = params.get("x");
+  const rawY = params.get("y");
+  // Ojo: `Number(null)` es 0, así que hay que exigir que el param exista.
+  if (!rawX || !rawY) return null;
+  const x = Number(rawX);
+  const y = Number(rawY);
   if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  const z = Number(params.get("z"));
   return { x, y, z: Number.isFinite(z) && z > 0 ? z : 100 };
 }
 

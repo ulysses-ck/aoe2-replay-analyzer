@@ -231,10 +231,13 @@ function parseWithAgelens(recording, fileName) {
 async function run() {
   const { buffer, fileName } = workerData;
 
-  // El panic hook de Rust escupe un backtrace enorme por `console.error` en cada
+  // El panic hook de Rust escupe un backtrace enorme directo a stderr en cada
   // replay que no puede decodificar. Es esperable y ensucia los logs del server.
+  // El worker está aislado, así que tapar stderr acá no afecta al proceso padre.
   const realConsoleError = console.error;
+  const realStderrWrite = process.stderr.write.bind(process.stderr);
   console.error = () => {};
+  process.stderr.write = () => true;
 
   try {
     try {
@@ -256,6 +259,7 @@ async function run() {
     }
   } finally {
     console.error = realConsoleError;
+    process.stderr.write = realStderrWrite;
   }
 }
 
