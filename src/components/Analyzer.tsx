@@ -151,10 +151,17 @@ export default function Analyzer() {
           <span className="font-mono text-[11px] text-zinc-500">{meta.fileName}</span>
         </div>
         <div className="flex items-center gap-4 font-mono text-[11px] text-zinc-400">
-          <span>build {meta.build}</span>
-          <span>mapa {meta.mapSize}×{meta.mapSize}</span>
+          {meta.build > 0 ? <span>build {meta.build}</span> : null}
+          <span>
+            mapa {meta.mapSize}×{meta.mapSize}
+          </span>
           <span>{meta.playerCount} jugadores</span>
           <span>{formatTime(meta.durationMs)}</span>
+          {meta.engine === "agelens" ? (
+            <span className="rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-amber-300">
+              parser alternativo
+            </span>
+          ) : null}
           <button
             type="button"
             onClick={() => inputRef.current?.click()}

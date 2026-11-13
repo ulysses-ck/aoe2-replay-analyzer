@@ -42,6 +42,8 @@ export type ReplayModel = {
     mapSize: number;
     durationMs: number;
     playerCount: number;
+    /** Parser que resolvió el archivo. */
+    engine?: "aoe2rec" | "agelens";
     /** Sólo los agrega la API al responder. */
     parseMs?: number;
     bytes?: number;

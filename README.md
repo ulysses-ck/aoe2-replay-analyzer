@@ -34,15 +34,41 @@ pnpm start
 
 | Pieza | Rol |
 |---|---|
-| `src/lib/parse-replay.ts` | Convierte el `.aoe2record` en un modelo compacto |
+| `workers/parse-replay.mjs` | Parser en worker thread: `aoe2rec-js` y fallback `agelens` |
+| `src/lib/parse-replay.ts` | Cliente del worker: timeout, aislamiento de fallos, tipos |
 | `src/app/api/parse/route.ts` | `POST /api/parse` (multipart `file`) → JSON |
 | `src/components/Analyzer.tsx` | Layout, upload, timeline, reloj de reproducción |
 | `src/components/MapCanvas.tsx` | Canvas isométrico con zoom anclado y pan |
 | `src/lib/types.ts` | Tipos compartidos y paleta de colores de jugador |
 
-El parser es [`aoe2rec-js`](https://www.npmjs.com/package/aoe2rec-js) (WASM, MIT), que corre
-en un route handler de Node. `next.config.ts` lo excluye del bundler con
-`serverExternalPackages` porque carga un `.wasm` desde `node_modules`.
+### Por qué un worker
+
+El parser vive en un worker thread por dos motivos concretos:
+
+1. **`aoe2rec-js` es WASM y puede matar el proceso.** En algunos replays del mismo
+   build del juego muere con un trap (`RuntimeError: unreachable`) que en el hilo
+   principal se lleva puesto el server. Aislado, se atrapa y se prueba el plan B.
+2. **Parsear ~500k operaciones bloquea el event loop** más de un segundo; en un
+   worker el resto de los requests sigue respondiendo.
+
+El worker se carga por ruta (`process.cwd()/workers/parse-replay.mjs`), no por
+import: el bundler no puede seguirlo y el archivo tiene que existir tal cual en el
+deploy. Si algún día esto va a serverless, hay que empaquetarlo aparte.
+
+### Dos motores
+
+| Motor | Cuándo | Qué aporta |
+|---|---|---|
+| `aoe2rec-js` (WASM) | Primero, siempre | más rápido; `unit_ids` en los `Move` |
+| `agelens` (JS puro) | Si el primero falla | parsea replays que rompen el WASM; sin `unit_ids` |
+
+`agelens` no incluye el prefijo de longitud en su decodificación de acciones y sus
+campos de `Build` salen corridos, así que los decodificamos nosotros desde su
+`payload.raw`: el registro es `[player u8][largo u16][payload]`, y el payload usa el
+mismo layout que documenta la tabla de abajo.
+
+Cuando se usa el fallback, la UI muestra un badge **parser alternativo** y el
+`meta.engine` de la respuesta lo dice explícitamente.
 
 ### Qué expone el replay
 
@@ -82,20 +108,30 @@ node scripts/capture.mjs /ruta/al/replay.aoe2record /tmp/shots
 > Corré el script con el `node` del sistema, no con `pnpm exec`: en WSL `pnpm` puede
 > resolver al shim de Windows y Playwright entonces busca binarios `win64`.
 
+Para medir cobertura de parseo sobre un lote de replays (usa el mismo worker que la API):
+
+```bash
+node scripts/parse-fixtures.mjs "/ruta/a/savegame"
+```
+
+Reporta por archivo qué motor resolvió, tiempo, duración, tamaño de mapa y cuántos
+edificios/movimientos/mensajes salieron.
+
 ## Límites conocidos
 
-- **Cobertura del parser.** `aoe2rec-js` falla con un panic en algunos replays
-  (`bad magic`) incluso dentro del mismo build del juego. Falta un fallback
-  (`agelens` o `mgz-fast`).
+- **Cobertura del parser.** `aoe2rec-js` falla con un trap de WASM en una parte de los
+  replays (`bad magic`, mismo build del juego). El fallback a `agelens` cubre esos casos,
+  pero no trae `unit_ids` y no expone ganador.
 - **Edificios sin footprint real.** Todos se dibujan con el mismo volumen; el tipo está en
   el modelo pero todavía no se mapea a tamaño/forma.
-- **Sin terreno ni doodads.** El mapa es el rombo de juego con grilla adaptativa.
+- **Sin terreno ni doodads.** El mapa es el rombo de juego con grilla adaptativa. `agelens`
+  sí expone los tiles del mapa; falta usarlos.
 - **Nombres de civilización** no se muestran a propósito: el mapeo de `civ_id` todavía no
   está validado y un nombre equivocado es peor que ninguno.
 
 ## Siguiente
 
-- Fallback de parseo para los replays que rompen.
+- Usar los tiles de `agelens` para dibujar terreno real.
 - Cámara que sigue al jugador (`Viewlock`) y heatmap de "a dónde miró".
 - Deep link al viewport (`?t=&x=&y=&z=`).
 - Índice de highlights (raids, batallas, picos de APM) reusando la heurística del MVP viejo.

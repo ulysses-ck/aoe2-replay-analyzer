@@ -1,146 +1,82 @@
-import { parse_rec, parse_rec_summary } from "aoe2rec-js";
+import path from "node:path";
+import { Worker } from "node:worker_threads";
 
-import type {
-  BuildingEvent,
-  ChatMessage,
-  MoveEvent,
-  Player,
-  ReplayModel,
-} from "./types";
+import type { ReplayModel } from "./types";
 
 /**
- * Parseo de un `.aoe2record` (DE) a un modelo compacto para la UI.
+ * Cliente del parser. El trabajo pesado vive en `workers/parse-replay.mjs`,
+ * que corre en un worker thread por dos razones:
  *
- * `aoe2rec-js` expone el stream de operaciones sin tipar, así que las formas de
- * abajo se decodifican a mano. Los offsets de `Build` están documentados en
- * `docs/FORMAT.md` y se validaron contra un replay real (build 188329).
+ * 1. `aoe2rec-js` es WASM y en algunos replays muere con un trap
+ *    (`RuntimeError: unreachable`). En el hilo principal eso se lleva puesto el
+ *    server; aislado, se atrapa y se cae al parser de respaldo.
+ * 2. Parsear ~500k operaciones bloquea el event loop más de un segundo.
+ *
+ * El worker se resuelve por ruta porque el bundler no puede seguir un módulo que
+ * Node carga en runtime: tiene que existir tal cual en el deploy.
  */
 
-type RawOp = Record<string, any>;
+export type ParseErrorCode = "unsupported" | "timeout" | "crashed";
 
-function bytesOf(data: unknown): Uint8Array | null {
-  if (!Array.isArray(data)) return null;
-  return Uint8Array.from(data as number[]);
-}
+export class ReplayParseError extends Error {
+  readonly code: ParseErrorCode;
 
-function safeJson(text: string): any {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return null;
+  constructor(code: ParseErrorCode, message: string) {
+    super(message);
+    this.name = "ReplayParseError";
+    this.code = code;
   }
 }
 
-/** `Build` guarda sus campos en binario plano. */
-function decodeBuild(data: unknown) {
-  const d = bytesOf(data);
-  if (!d || d.length < 32) return null;
-  const dv = new DataView(d.buffer, d.byteOffset, d.byteLength);
-  const x = dv.getFloat32(4, true);
-  const y = dv.getFloat32(8, true);
-  const typeId = dv.getUint32(12, true);
-  const objectId = dv.getUint32(d.byteLength - 4, true);
-  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-  if (x < 0 || y < 0) return null;
-  return { x, y, typeId, objectId };
-}
+const WORKER_PATH = path.join(process.cwd(), "workers", "parse-replay.mjs");
+const TIMEOUT_MS = 120_000;
 
-export function parseReplay(buffer: ArrayBuffer, fileName: string): ReplayModel {
-  // 1) Cabecera y jugadores (el resumen es mucho más barato que el stream).
-  const summary = parse_rec_summary(buffer);
-  const header = summary.header;
-  const settings = header.game_settings;
+type WorkerResult =
+  | { ok: true; model: ReplayModel; fallbackReason?: string }
+  | { ok: false; code: ParseErrorCode; message: string; fallback?: string };
 
-  const players: Player[] = [];
-  const teams = Array.from(summary.teams as unknown as any[]);
-  teams.forEach((team, teamIndex) => {
-    for (const p of Array.from(team.players as any[])) {
-      players.push({
-        id: Number(p.player_number),
-        name: String(p.name),
-        civId: Number(p.civ_id),
-        colorId: Number(p.color_id),
-        team: teamIndex + 1,
-        winner: Boolean(team.winner),
-      });
-    }
+export function parseReplay(buffer: ArrayBuffer, fileName: string): Promise<ReplayModel> {
+  return new Promise<ReplayModel>((resolve, reject) => {
+    let settled = false;
+    const finish = (action: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      action();
+    };
+
+    const worker = new Worker(WORKER_PATH, {
+      workerData: { buffer, fileName },
+      transferList: [buffer],
+    });
+
+    const timer = setTimeout(() => {
+      void worker.terminate();
+      finish(() => reject(new ReplayParseError("timeout", "El parseo tardó demasiado")));
+    }, TIMEOUT_MS);
+
+    worker.once("message", (result: WorkerResult) => {
+      if (result.ok) {
+        finish(() => resolve(result.model));
+      } else {
+        finish(() =>
+          reject(
+            new ReplayParseError(
+              result.code,
+              result.fallback ? `${result.message} / ${result.fallback}` : result.message,
+            ),
+          ),
+        );
+      }
+      void worker.terminate();
+    });
+
+    worker.once("error", (error) => {
+      finish(() => reject(new ReplayParseError("crashed", error.message)));
+    });
+
+    worker.once("exit", (code) => {
+      finish(() => reject(new ReplayParseError("crashed", `El worker salió con código ${code}`)));
+    });
   });
-  players.sort((a, b) => a.id - b.id);
-
-  // 2) Stream de operaciones.
-  const rec = parse_rec(buffer);
-  const ops: RawOp[] = rec?.chapters?.[0]?.operations ?? [];
-
-  const buildings: BuildingEvent[] = [];
-  const moves: MoveEvent[] = [];
-  const chat: ChatMessage[] = [];
-
-  let clock = 0;
-  for (const op of ops) {
-    if (!op) continue;
-
-    // Sync sólo transporta tiempo: se acumula para los op que no lo traen.
-    if (op.Sync) {
-      clock += Number(op.Sync.time_increment) || 0;
-      continue;
-    }
-
-    if (op.Chat) {
-      const parsed = safeJson(String(op.Chat.text ?? ""));
-      const raw = parsed?.message;
-      if (typeof raw === "string" && raw.length > 0) {
-        // Los mensajes del juego vienen como `<player_id,3,1> ha avanzado a la Edad X.`
-        const system = raw.startsWith("<player_id");
-        const tag = system ? /^<player_id,(\d+),\d+>\s*/.exec(raw) : null;
-        const text = tag ? raw.slice(tag[0].length) : raw;
-        chat.push({
-          t: clock,
-          playerId: Number(tag?.[1] ?? parsed.player ?? 0),
-          text,
-          system,
-        });
-      }
-      continue;
-    }
-
-    const action = op.Action;
-    if (!action?.action_data) continue;
-
-    const t = Number(action.world_time) || clock;
-    const data = action.action_data;
-
-    if (data.Build) {
-      const b = decodeBuild(data.Build.data);
-      if (b) {
-        buildings.push({ t, playerId: Number(data.Build.player_id), ...b });
-      }
-    } else if (data.Move) {
-      const m = data.Move;
-      const x = Number(m.x);
-      const y = Number(m.y);
-      if (Number.isFinite(x) && Number.isFinite(y)) {
-        moves.push({
-          t,
-          playerId: Number(m.player_id),
-          x,
-          y,
-          count: Array.isArray(m.unit_ids) ? m.unit_ids.length : 0,
-        });
-      }
-    }
-  }
-
-  return {
-    meta: {
-      fileName,
-      build: Number(header.build),
-      mapSize: Number(settings.map_size),
-      durationMs: Number(summary.duration),
-      playerCount: players.length,
-    },
-    players,
-    buildings,
-    moves,
-    chat,
-  };
 }
