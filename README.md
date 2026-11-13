@@ -23,6 +23,8 @@ pnpm dev
 Abrí http://localhost:3000 y arrastrá un `.aoe2record` (suelen estar en
 `Documents/My Games/Age of Empires 2 DE/<steam-id>/savegame/`).
 
+Variables de entorno: todas opcionales, ver `.env.example`.
+
 Para probar el build de producción:
 
 ```bash
@@ -36,7 +38,9 @@ pnpm start
 |---|---|
 | `workers/parse-replay.mjs` | Parser en worker thread: `aoe2rec-js` y fallback `agelens` |
 | `src/lib/parse-replay.ts` | Cliente del worker: timeout, aislamiento de fallos, tipos |
+| `src/lib/replay-store.ts` | Cache en disco por hash del archivo (deep links) |
 | `src/app/api/parse/route.ts` | `POST /api/parse` (multipart `file`) → JSON |
+| `src/app/api/replay/[id]/route.ts` | `GET /api/replay/<id>` → modelo cacheado |
 | `src/components/Analyzer.tsx` | Layout, upload, timeline, reloj de reproducción |
 | `src/components/MapCanvas.tsx` | Canvas isométrico con zoom anclado y pan |
 | `src/lib/types.ts` | Tipos compartidos y paleta de colores de jugador |
@@ -62,6 +66,22 @@ deploy. Si algún día esto va a serverless, hay que empaquetarlo aparte.
 | `aoe2rec-js` (WASM) | Primero, siempre | más rápido; `unit_ids` en los `Move` |
 | `agelens` (JS puro) | Si el primero falla | parsea replays que rompen el WASM; sin `unit_ids` |
 
+Medición sobre un corpus real de 140 replays (builds 48987 a 57257):
+
+| Categoría | Parseados | Detalle |
+|---|---|---|
+| Multijugador (`MP Replay`) | **84 / 84** | 100 % |
+| Un jugador / campaña (`SP Replay`) | 22 / 55 | 40 % |
+| **Total** | **107 / 140** | 76 % |
+
+`aoe2rec-js` solo resuelve 42 de los 140; `agelens` rescata 65 más. Los 33 que
+fallan con los dos son todos de un jugador: usan un layout de capítulos que
+ninguno de los dos parsers contempla. Reproducir el número:
+
+```bash
+node scripts/parse-fixtures.mjs "/ruta/a/savegame"
+```
+
 `agelens` no incluye el prefijo de longitud en su decodificación de acciones y sus
 campos de `Build` salen corridos, así que los decodificamos nosotros desde su
 `payload.raw`: el registro es `[player u8][largo u16][payload]`, y el payload usa el
@@ -69,6 +89,23 @@ mismo layout que documenta la tabla de abajo.
 
 Cuando se usa el fallback, la UI muestra un badge **parser alternativo** y el
 `meta.engine` de la respuesta lo dice explícitamente.
+
+### Deep links
+
+Cada modelo parseado se guarda en disco bajo el hash del archivo, así que la URL
+puede llevar el estado completo:
+
+```
+/?r=<id>&t=1800&x=70&y=90&z=300
+```
+
+`r` es el replay (hash del contenido), `t` el segundo, `x`/`y` el tile en el centro
+del viewport y `z` el zoom. El botón **Copiar link** arma y copia esa URL; abrirla
+restaura partida, instante y encuadre sin volver a subir nada.
+
+El directorio del cache se configura con `REPLAY_CACHE_DIR` (ver `.env.example`);
+por defecto es `./.cache/replays` y está en `.gitignore`. Subir dos veces el mismo
+archivo no duplica nada. No hay purga automática todavía.
 
 ### Qué expone el replay
 
@@ -119,9 +156,8 @@ edificios/movimientos/mensajes salieron.
 
 ## Límites conocidos
 
-- **Cobertura del parser.** `aoe2rec-js` falla con un trap de WASM en una parte de los
-  replays (`bad magic`, mismo build del juego). El fallback a `agelens` cubre esos casos,
-  pero no trae `unit_ids` y no expone ganador.
+- **Cobertura del parser.** Multijugador entra completo; los replays de un jugador
+  fallan en 33 de 55 casos. Ahí la API devuelve 422 con código, sin tumbar el server.
 - **Edificios sin footprint real.** Todos se dibujan con el mismo volumen; el tipo está en
   el modelo pero todavía no se mapea a tamaño/forma.
 - **Sin terreno ni doodads.** El mapa es el rombo de juego con grilla adaptativa. `agelens`

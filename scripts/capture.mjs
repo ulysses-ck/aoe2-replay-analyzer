@@ -82,6 +82,18 @@ console.log(`play: ${before} ms → ${after} ms (Δ ${after - before} ms)`);
 
 await page.screenshot({ path: `${outDir}/06-play.png` });
 
+// Deep link: la URL debe traer r/t/x/y/z y al reabrirla tiene que restaurar
+// el replay (desde el cache) y el viewport, sin volver a subir el archivo.
+const deepLink = page.url();
+console.log(`deep link: ${deepLink}`);
+const restore = await page.goto(deepLink, { waitUntil: "networkidle" });
+await page.waitForSelector("canvas", { timeout: 120_000 });
+await page.waitForTimeout(800);
+const restoredClock = Number(await clock());
+const zoomBadge = await page.locator("text=/^\\d+%$/").first().textContent();
+console.log(`restaurado: t=${restoredClock} ms | zoom=${zoomBadge} | http=${restore?.status()}`);
+await page.screenshot({ path: `${outDir}/07-deeplink.png` });
+
 console.log(`errores de consola: ${errors.length}`);
 for (const error of errors.slice(0, 10)) console.log("  -", error);
 

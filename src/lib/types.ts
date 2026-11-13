@@ -44,6 +44,8 @@ export type ReplayModel = {
     playerCount: number;
     /** Parser que resolvió el archivo. */
     engine?: "aoe2rec" | "agelens";
+    /** Hash del archivo: identifica el replay en el cache y en el deep link. */
+    id?: string;
     /** Sólo los agrega la API al responder. */
     parseMs?: number;
     bytes?: number;

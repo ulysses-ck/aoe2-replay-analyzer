@@ -44,6 +44,39 @@ export default function Analyzer() {
     }
   }, []);
 
+  // Restaura la partida desde un deep link (?r=<id>), sin volver a subir nada.
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("r");
+    if (!id) return;
+    let cancelled = false;
+    setBusy(true);
+    fetch(`/api/replay/${id}`)
+      .then((response) => (response.ok ? response.json() : Promise.reject(new Error("no encontrado"))))
+      .then((payload: ReplayModel) => {
+        if (cancelled) return;
+        setModel(payload);
+        setFileName(payload.meta.fileName);
+      })
+      .catch(() => {
+        if (!cancelled) setError("El replay de este link ya no está disponible. Subilo de nuevo.");
+      })
+      .finally(() => {
+        if (!cancelled) setBusy(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Restaura el instante desde el deep link (?t=segundos).
+  useEffect(() => {
+    if (!model) return;
+    const t = Number(new URLSearchParams(window.location.search).get("t"));
+    if (Number.isFinite(t) && t > 0) {
+      setTime(Math.min(model.meta.durationMs, t * 1000));
+    }
+  }, [model]);
+
   // Reloj de reproducción.
   useEffect(() => {
     if (!playing || !model) return;
@@ -261,7 +294,7 @@ export default function Analyzer() {
 
         <main className="flex min-w-0 flex-1 flex-col">
           <div className="min-h-0 flex-1">
-            <MapCanvas model={model} time={time} />
+            <MapCanvas model={model} time={time} replayId={meta.id} />
           </div>
 
           <div className="border-t border-white/10 px-4 py-3">

@@ -231,22 +231,31 @@ function parseWithAgelens(recording, fileName) {
 async function run() {
   const { buffer, fileName } = workerData;
 
+  // El panic hook de Rust escupe un backtrace enorme por `console.error` en cada
+  // replay que no puede decodificar. Es esperable y ensucia los logs del server.
+  const realConsoleError = console.error;
+  console.error = () => {};
+
   try {
-    return { ok: true, model: parseWithAoe2rec(buffer, fileName) };
-  } catch (error) {
-    // El trap de WASM no dice mucho; queda como intento fallido.
-    const primary = error instanceof Error ? error.message : String(error);
     try {
-      const recording = await parseRecording(new Uint8Array(buffer));
-      return { ok: true, model: parseWithAgelens(recording, fileName), fallbackReason: primary };
-    } catch (fallbackError) {
-      return {
-        ok: false,
-        code: "unsupported",
-        message: primary,
-        fallback: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
-      };
+      return { ok: true, model: parseWithAoe2rec(buffer, fileName) };
+    } catch (error) {
+      // El trap de WASM no dice mucho; queda como intento fallido.
+      const primary = error instanceof Error ? error.message : String(error);
+      try {
+        const recording = await parseRecording(new Uint8Array(buffer));
+        return { ok: true, model: parseWithAgelens(recording, fileName), fallbackReason: primary };
+      } catch (fallbackError) {
+        return {
+          ok: false,
+          code: "unsupported",
+          message: primary,
+          fallback: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
+        };
+      }
     }
+  } finally {
+    console.error = realConsoleError;
   }
 }
 

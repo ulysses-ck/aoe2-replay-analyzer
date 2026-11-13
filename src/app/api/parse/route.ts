@@ -1,4 +1,5 @@
 import { parseReplay, ReplayParseError } from "@/lib/parse-replay";
+import { replayId, saveReplayModel } from "@/lib/replay-store";
 
 // El parser corre en un worker con WASM sobre Node: nada de edge.
 export const runtime = "nodejs";
@@ -27,13 +28,24 @@ export async function POST(request: Request) {
 
   const buffer = await file.arrayBuffer();
   const started = Date.now();
+  // El hash se calcula antes: parseReplay transfiere el buffer al worker.
+  const id = replayId(buffer);
 
   try {
     const model = await parseReplay(buffer, file.name);
-    return Response.json({
+    const payload = {
       ...model,
-      meta: { ...model.meta, parseMs: Date.now() - started, bytes: buffer.byteLength },
-    });
+      meta: { ...model.meta, id, parseMs: Date.now() - started },
+    };
+
+    // El cache es un extra: si falla, igual devolvemos el modelo.
+    try {
+      await saveReplayModel(id, payload);
+    } catch {
+      // sin cache el link compartible no funciona, pero el análisis sí
+    }
+
+    return Response.json(payload);
   } catch (error) {
     if (error instanceof ReplayParseError) {
       return Response.json(

@@ -14,9 +14,46 @@ type View = {
 
 type Size = { w: number; h: number };
 
+/** Estado del viewport serializado para el deep link: centro en tiles + zoom. */
+type ViewParams = { x: number; y: number; z: number };
+
 /** Ajuste inicial: el rombo isométrico 2:1 entra completo en el canvas. */
 function fitUnit(size: Size, mapSize: number): number {
   return Math.min((size.w * 0.9) / (2 * mapSize), (size.h * 0.9) / mapSize);
+}
+
+/** Tile que queda en el centro del canvas para un view dado. */
+function centerTile(view: View, size: Size, mapSize: number): { x: number; y: number } {
+  const u = (size.w / 2 - view.cx) / view.unit;
+  const v = (size.h / 2 - view.cy) / (view.unit * 0.5);
+  return { x: (u + v + mapSize) / 2, y: (u - v + mapSize) / 2 };
+}
+
+/** View que deja el tile (x, y) en el centro del canvas. */
+function viewForTile(
+  tile: { x: number; y: number },
+  unit: number,
+  size: Size,
+  mapSize: number,
+): View {
+  const u = tile.x + tile.y - mapSize;
+  const v = tile.y - tile.x;
+  return {
+    cx: size.w / 2 - u * unit,
+    cy: size.h / 2 - v * unit * 0.5,
+    unit,
+  };
+}
+
+/** Lee `?x=&y=&z=` de la URL. Devuelve null si no hay nada usable. */
+function readViewParams(): ViewParams | null {
+  if (typeof window === "undefined") return null;
+  const params = new URLSearchParams(window.location.search);
+  const x = Number(params.get("x"));
+  const y = Number(params.get("y"));
+  const z = Number(params.get("z"));
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  return { x, y, z: Number.isFinite(z) && z > 0 ? z : 100 };
 }
 
 /** Aclara (factor > 1) u oscurece (factor < 1) un color hex. */
@@ -32,19 +69,25 @@ function shade(hex: string, factor: number): string {
 export default function MapCanvas({
   model,
   time,
+  replayId,
 }: {
   model: ReplayModel;
   time: number;
+  /** Id del replay en el cache: viaja en el deep link para poder reabrirlo. */
+  replayId?: string;
 }) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const viewRef = useRef<View | null>(null);
   const dragging = useRef<{ x: number; y: number } | null>(null);
+  const appliedInitial = useRef(false);
+  const urlTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [size, setSize] = useState<Size>({ w: 0, h: 0 });
   const [zoomPct, setZoomPct] = useState(100);
   const [tick, setTick] = useState(0);
   const [hover, setHover] = useState<{ x: number; y: number } | null>(null);
+  const [copied, setCopied] = useState(false);
 
   const mapSize = model.meta.mapSize || 200;
 
@@ -54,6 +97,26 @@ export default function MapCanvas({
       return Math.min(fit * 24, Math.max(fit * 0.7, unit));
     },
     [mapSize],
+  );
+
+  // Refleja viewport y tiempo en la URL, sin navegar: el link es compartible
+  // y sobrevive a un refresh. Se debouncea porque el pan dispara por frame.
+  const syncUrl = useCallback(
+    (view: View, s: Size) => {
+      if (urlTimer.current) clearTimeout(urlTimer.current);
+      urlTimer.current = setTimeout(() => {
+        const tile = centerTile(view, s, mapSize);
+        const z = Math.round((view.unit / fitUnit(s, mapSize)) * 100);
+        const params = new URLSearchParams(window.location.search);
+        params.set("t", (time / 1000).toFixed(0));
+        params.set("x", tile.x.toFixed(1));
+        params.set("y", tile.y.toFixed(1));
+        params.set("z", String(z));
+        if (replayId) params.set("r", replayId);
+        window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
+      }, 450);
+    },
+    [mapSize, time, replayId],
   );
 
   // Tamaño del canvas siguiendo al contenedor.
@@ -66,7 +129,16 @@ export default function MapCanvas({
       setSize(next);
       const current = viewRef.current;
       if (!current) {
-        viewRef.current = { cx: next.w / 2, cy: next.h / 2, unit: fitUnit(next, mapSize) };
+        const params = appliedInitial.current ? null : readViewParams();
+        appliedInitial.current = true;
+        const fit = fitUnit(next, mapSize);
+        if (params) {
+          const unit = Math.min(fit * 24, Math.max(fit * 0.7, (fit * params.z) / 100));
+          viewRef.current = viewForTile(params, unit, next, mapSize);
+          setZoomPct(Math.round((unit / fit) * 100));
+        } else {
+          viewRef.current = { cx: next.w / 2, cy: next.h / 2, unit: fit };
+        }
       } else {
         current.unit = clampUnit(current.unit, next);
         viewRef.current = { ...current };
@@ -98,16 +170,47 @@ export default function MapCanvas({
         unit: nextUnit,
       };
       setZoomPct(Math.round((nextUnit / fitUnit(size, mapSize)) * 100));
+      syncUrl(viewRef.current, size);
     };
     canvas.addEventListener("wheel", onWheel, { passive: false });
     return () => canvas.removeEventListener("wheel", onWheel);
-  }, [size, mapSize, clampUnit]);
+  }, [size, mapSize, clampUnit, syncUrl]);
 
   const reset = useCallback(() => {
     if (size.w === 0) return;
     viewRef.current = { cx: size.w / 2, cy: size.h / 2, unit: fitUnit(size, mapSize) };
     setZoomPct(100);
-  }, [size, mapSize]);
+    syncUrl(viewRef.current, size);
+  }, [size, mapSize, syncUrl]);
+
+  // El tiempo también forma parte del link.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (view && size.w > 0) syncUrl(view, size);
+  }, [time, size, syncUrl]);
+
+  const share = useCallback(async () => {
+    const view = viewRef.current;
+    if (!view || size.w === 0) return;
+    // Escribimos el estado actual sin esperar el debounce.
+    const tile = centerTile(view, size, mapSize);
+    const z = Math.round((view.unit / fitUnit(size, mapSize)) * 100);
+    const params = new URLSearchParams(window.location.search);
+    params.set("t", (time / 1000).toFixed(0));
+    params.set("x", tile.x.toFixed(1));
+    params.set("y", tile.y.toFixed(1));
+    params.set("z", String(z));
+    if (replayId) params.set("r", replayId);
+    const url = `${window.location.origin}${window.location.pathname}?${params.toString()}`;
+    window.history.replaceState(null, "", url);
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch {
+      // Sin permiso de clipboard: al menos queda en la barra de direcciones.
+    }
+  }, [mapSize, size, time, replayId]);
 
   // Render.
   useEffect(() => {
@@ -283,6 +386,8 @@ export default function MapCanvas({
         onPointerLeave={() => setHover(null)}
         onPointerUp={() => {
           dragging.current = null;
+          const view = viewRef.current;
+          if (view && size.w > 0) syncUrl(view, size);
         }}
         onDoubleClick={reset}
       />
@@ -297,13 +402,22 @@ export default function MapCanvas({
         </div>
       ) : null}
 
-      <button
-        type="button"
-        onClick={reset}
-        className="absolute bottom-3 right-3 rounded-md border border-white/10 bg-black/60 px-2.5 py-1 text-xs text-zinc-300 transition hover:bg-white/10"
-      >
-        Reset (doble click)
-      </button>
+      <div className="absolute bottom-3 right-3 flex gap-2">
+        <button
+          type="button"
+          onClick={share}
+          className="rounded-md border border-white/10 bg-black/60 px-2.5 py-1 text-xs text-zinc-300 transition hover:bg-white/10"
+        >
+          {copied ? "Link copiado" : "Copiar link"}
+        </button>
+        <button
+          type="button"
+          onClick={reset}
+          className="rounded-md border border-white/10 bg-black/60 px-2.5 py-1 text-xs text-zinc-300 transition hover:bg-white/10"
+        >
+          Reset (doble click)
+        </button>
+      </div>
     </div>
   );
 }

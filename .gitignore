@@ -42,3 +42,6 @@ next-env.d.ts
 
 # capturas locales del script de verificación
 /.screenshots/
+
+# cache de replays parseados (deep links)
+/.cache/
