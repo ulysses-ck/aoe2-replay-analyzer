@@ -15,7 +15,7 @@
 import { parentPort, workerData } from "node:worker_threads";
 
 import { parse_rec, parse_rec_summary } from "aoe2rec-js";
-import { parseRecording } from "agelens";
+import { parseHeader, parseRecording } from "agelens";
 
 /** Ids de acción de AoE2 DE que usamos. */
 const ACTION_BUILD = 102;
@@ -347,6 +347,48 @@ function parseWithAgelens(recording, fileName) {
   };
 }
 
+// ─────────────────────────── terreno ───────────────────────────
+
+/**
+ * Tiles del mapa desde la cabecera de agelens.
+ *
+ * Se corre concurrente con el parse principal (parseHeader sólo lee la
+ * cabecera, ~1.5-5 s) así el terreno está disponible en ambos motores. La
+ * orientación está verificada empíricamente contra los edificios del body
+ * (`scripts/probe-tile-order3.mjs`): el índice es `y * dimension + x`, sin flip
+ * — las hipótesis alternativas caen un 25-28% de edificios sobre agua/bosque
+ * contra ~12% con ésta (el resto son docks y tala posterior al inicio).
+ */
+async function extractTerrain(buffer) {
+  const header = await parseHeader(new Uint8Array(buffer));
+  const tiles = header?.map?.tiles;
+  if (!Array.isArray(tiles) || tiles.length === 0) return undefined;
+  const dimension = Number(header.map.dimension) || 0;
+  if (!dimension) return undefined;
+  const terrain = new Array(tiles.length);
+  const elevation = new Array(tiles.length);
+  for (let i = 0; i < tiles.length; i += 1) {
+    terrain[i] = tiles[i].terrain | 0;
+    elevation[i] = tiles[i].elevation | 0;
+  }
+  return { dimension, terrain, elevation };
+}
+
+/** Terreno directo del recording de agelens (mismo formato que parseHeader). */
+function terrainFromRecording(recording) {
+  const tiles = recording?.map?.tiles;
+  if (!Array.isArray(tiles) || tiles.length === 0) return undefined;
+  const dimension = Number(recording.map.dimension) || 0;
+  if (!dimension) return undefined;
+  const terrain = new Array(tiles.length);
+  const elevation = new Array(tiles.length);
+  for (let i = 0; i < tiles.length; i += 1) {
+    terrain[i] = tiles[i].terrain | 0;
+    elevation[i] = tiles[i].elevation | 0;
+  }
+  return { dimension, terrain, elevation };
+}
+
 // ─────────────────────────── detección de highlights ───────────────────────────
 
 /**
@@ -468,14 +510,21 @@ async function run() {
   process.stderr.write = () => true;
 
   try {
+    // El terreno se parsea concurrente con el motor principal: sólo lee la
+    // cabecera y no depende de si aoe2rec revienta o no.
+    const terrainPromise = extractTerrain(buffer).catch(() => undefined);
     try {
-      return { ok: true, model: parseWithAoe2rec(buffer, fileName) };
+      const model = parseWithAoe2rec(buffer, fileName);
+      model.terrain = await terrainPromise;
+      return { ok: true, model };
     } catch (error) {
       // El trap de WASM no dice mucho; queda como intento fallido.
       const primary = error instanceof Error ? error.message : String(error);
       try {
         const recording = await parseRecording(new Uint8Array(buffer));
-        return { ok: true, model: parseWithAgelens(recording, fileName), fallbackReason: primary };
+        const model = parseWithAgelens(recording, fileName);
+        model.terrain = terrainFromRecording(recording) ?? (await terrainPromise);
+        return { ok: true, model, fallbackReason: primary };
       } catch (fallbackError) {
         return {
           ok: false,

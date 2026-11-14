@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { playerColor, type ReplayModel } from "@/lib/types";
 
@@ -99,6 +99,104 @@ function shade(hex: string, factor: number): string {
   return `rgb(${mix(r)}, ${mix(g)}, ${mix(b)})`;
 }
 
+// ─────────────────────────── paleta de terreno ───────────────────────────
+
+/**
+ * Color por id de terreno de DE (fuente: enum `TerrainId` de
+ * AoE2ScenarioParser, que cubre hasta los DLCs más nuevos). No pretende
+ * reproducir las texturas del juego: es una paleta por categorías — pasto,
+ * agua, bosque, nieve, arena — para leer el mapa de un vistazo.
+ */
+const TERRAIN_PALETTE: Record<string, string> = {
+  // Pasto y variantes (GRASS_1/2/3, OTHER, JUNGLE, DRY, MODDABLE, FLOWERS).
+  "0": "#4a7a30", "9": "#3f6a2a", "12": "#456f2d", "16": "#47752f", "27": "#568232",
+  "60": "#3d6d2e", "83": "#3a662b", "84": "#4a7a30", "85": "#456f2d", "86": "#3f6a2a",
+  "87": "#47752f", "100": "#8a9a4a", "122": "#557f38", "123": "#5a8440",
+  // Matorral.
+  "5": "#566d3a", "71": "#5d6f45", "72": "#8e9a8e", "77": "#4f7030",
+  // Tierra (DIRT_*, MUD, SAVANNAH).
+  "3": "#7d6b4c", "6": "#877452", "11": "#826d4e", "41": "#9c854f", "42": "#7a6749",
+  "44": "#6e5d42", "76": "#6f5f49",
+  // Desierto y roca.
+  "14": "#b09a62", "40": "#7a7a78", "45": "#9d8a55", "46": "#b5a068", "102": "#8d7a55",
+  // Agua: profunda < media < shallow. 26 = ICE_NAVIGABLE, 111 = swamp.
+  "1": "#3a6f92", "4": "#4d86a6", "22": "#274c68", "23": "#2f5c7c", "26": "#8fb0c0",
+  "28": "#3a6f92", "57": "#223f55", "58": "#3d7aa0", "59": "#4d86a6", "93": "#4d86a6",
+  "94": "#4d86a6", "95": "#3f7c6f", "96": "#5a6b52", "97": "#3a6f92", "98": "#3a6f92",
+  "99": "#274c68", "111": "#4a5f63", "114": "#4d86a6", "115": "#4d86a6", "116": "#274c68",
+  "130": "#466a70",
+  // Playas.
+  "2": "#b3a06b", "37": "#9fb3bd", "51": "#b3a06b", "52": "#a89e6e", "53": "#bfb287",
+  "79": "#a99a66", "80": "#a99a66", "81": "#a99a66", "82": "#a99a66", "107": "#8f8668",
+  "108": "#847c64", "109": "#7a7260",
+  // Bosques: verdes oscuros; los de nieve/otoño van grisáceos y ocre.
+  "10": "#2c4f20", "13": "#5c5a30", "17": "#2e5426", "18": "#33582a", "19": "#284620",
+  "20": "#38612c", "21": "#5b6e57", "48": "#2c4f20", "49": "#565a2e", "50": "#3a5c28",
+  "55": "#3f6b33", "56": "#27501f", "88": "#315423", "89": "#3f5a2b", "90": "#3f6b5c",
+  "91": "#41705f", "92": "#3f6b5c", "104": "#6f5a34", "105": "#7c6d55", "106": "#665d49",
+  "110": "#3a5c28", "112": "#4f6631", "113": "#33582a", "128": "#57583a", "131": "#28462a",
+  "132": "#4d5c50", "133": "#2e5527",
+  // Nieve.
+  "32": "#c7cfd4", "33": "#9aa4aa", "34": "#b9c2c7", "36": "#c7cfd4", "38": "#a8adb3",
+  "39": "#aab4ba", "43": "#9aa4aa", "61": "#a3aeb4", "73": "#cdd5da", "74": "#c7cfd4",
+  "124": "#d3dade", "125": "#cdd5da", "126": "#c7cfd4",
+  // Hielo.
+  "35": "#a8c3d1", "127": "#a8c3d1",
+  // Granjas y pasturas.
+  "7": "#a08b3c", "8": "#8f7f46", "29": "#a08b3c", "30": "#9d883e", "31": "#9a8440",
+  "63": "#9a8440", "64": "#8f7f46", "65": "#9a8440", "66": "#9d883e", "67": "#9a8440",
+  "117": "#8f9448", "118": "#7d8244", "119": "#8f9448", "120": "#8f9448", "121": "#8f9448",
+  // Caminos.
+  "24": "#8b8069", "25": "#837a64", "75": "#9aa0a5", "78": "#96938a", "103": "#93918c",
+  // Bloqueado / sin explorar.
+  "47": "#15171a", "68": "#15171a", "129": "#1a1c1f",
+};
+const TERRAIN_DEFAULT = "#5e6b4a";
+
+/** Etiqueta legible para el hover, sólo de los terrenos más comunes. */
+const TERRAIN_NAMES: Record<number, string> = {
+  0: "pasto", 1: "agua shallow", 2: "playa", 3: "tierra", 4: "shallow", 7: "granja",
+  9: "pasto 3", 10: "bosque", 12: "pasto 2", 14: "desierto", 19: "pino", 21: "pino (nieve)",
+  22: "agua profunda", 23: "agua media", 32: "nieve", 35: "hielo", 41: "sabana",
+  76: "lodo", 100: "pasto seco", 117: "pastura",
+};
+
+/** Factor de brillo según elevación: 0-7 → 0.75-1.17. */
+function elevationFactor(level: number): number {
+  return Math.min(1.17, 0.75 + 0.06 * Math.max(0, level));
+}
+
+/**
+ * Canvas offscreen con el terreno: un píxel por tile en espacio de mapa
+ * (`índice = y * dimension + x`, verificado contra los edificios del body).
+ * En el render se dibuja una sola vez por frame con una transform isométrica —
+ * dibujar 48.400 diamantes por frame sería demasiado lento.
+ */
+function buildTerrainCanvas(terrain: { dimension: number; terrain: number[]; elevation: number[] }): HTMLCanvasElement | null {
+  if (typeof document === "undefined") return null;
+  const dim = terrain.dimension;
+  if (!dim || terrain.terrain.length !== dim * dim) return null;
+  const offscreen = document.createElement("canvas");
+  offscreen.width = dim;
+  offscreen.height = dim;
+  const context = offscreen.getContext("2d");
+  if (!context) return null;
+  const image = context.createImageData(dim, dim);
+  for (let i = 0; i < dim * dim; i += 1) {
+    const color = TERRAIN_PALETTE[String(terrain.terrain[i])] ?? TERRAIN_DEFAULT;
+    const factor = elevationFactor(terrain.elevation[i]);
+    const r = parseInt(color.slice(1, 3), 16);
+    const g = parseInt(color.slice(3, 5), 16);
+    const b = parseInt(color.slice(5, 7), 16);
+    image.data[i * 4] = Math.round(r * factor);
+    image.data[i * 4 + 1] = Math.round(g * factor);
+    image.data[i * 4 + 2] = Math.round(b * factor);
+    image.data[i * 4 + 3] = 255;
+  }
+  context.putImageData(image, 0, 0);
+  return offscreen;
+}
+
 export default function MapCanvas({
   model,
   time,
@@ -128,6 +226,7 @@ export default function MapCanvas({
   const [heatmap, setHeatmap] = useState(false);
 
   const mapSize = model.meta.mapSize || 200;
+  const terrainCanvas = useMemo(() => (model.terrain ? buildTerrainCanvas(model.terrain) : null), [model.terrain]);
 
   const clampUnit = useCallback(
     (unit: number, s: Size) => {
@@ -302,17 +401,41 @@ export default function MapCanvas({
     const px = (x: number, y: number) => cx + (x + y - N) * unit;
     const py = (x: number, y: number) => cy + (y - x) * unit * 0.5;
 
-    // Rombo del mapa.
+    // Rombo del mapa: con terreno real se dibuja el canvas offscreen completo
+    // bajo una transform isométrica (screen = unit·(u+v) + offset en X,
+    // 0.5·unit·(v-u) + offset en Y); sin terreno, el relleno plano de siempre.
+    if (terrainCanvas) {
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      ctx.setTransform(
+        dpr * unit,
+        dpr * -0.5 * unit,
+        dpr * unit,
+        dpr * 0.5 * unit,
+        dpr * (cx - N * unit),
+        dpr * cy,
+      );
+      ctx.drawImage(terrainCanvas, 0, 0);
+      ctx.imageSmoothingEnabled = false;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    } else {
+      ctx.beginPath();
+      ctx.moveTo(px(0, 0), py(0, 0));
+      ctx.lineTo(px(N, 0), py(N, 0));
+      ctx.lineTo(px(N, N), py(N, N));
+      ctx.lineTo(px(0, N), py(0, N));
+      ctx.closePath();
+      ctx.fillStyle = "#14261a";
+      ctx.fill();
+    }
+    ctx.strokeStyle = "#2c5c37";
+    ctx.lineWidth = 1.5;
     ctx.beginPath();
     ctx.moveTo(px(0, 0), py(0, 0));
     ctx.lineTo(px(N, 0), py(N, 0));
     ctx.lineTo(px(N, N), py(N, N));
     ctx.lineTo(px(0, N), py(0, N));
     ctx.closePath();
-    ctx.fillStyle = "#14261a";
-    ctx.fill();
-    ctx.strokeStyle = "#2c5c37";
-    ctx.lineWidth = 1.5;
     ctx.stroke();
 
     // Grilla adaptativa: el paso se achica a medida que entra el zoom, para que
@@ -468,7 +591,7 @@ export default function MapCanvas({
         ctx.stroke();
       }
     }
-  }, [model, time, size, mapSize, zoomPct, tick, heatmap]);
+  }, [model, time, size, mapSize, zoomPct, tick, heatmap, terrainCanvas]);
 
   return (
     <div ref={wrapRef} className="relative h-full w-full overflow-hidden">
@@ -521,6 +644,12 @@ export default function MapCanvas({
       {hover ? (
         <div className="pointer-events-none absolute left-3 top-3 rounded-md bg-black/60 px-2 py-1 font-mono text-[11px] text-zinc-400">
           tile {hover.x}, {hover.y}
+          {(() => {
+            const t = model.terrain;
+            if (!t) return null;
+            const id = t.terrain[hover.y * t.dimension + hover.x];
+            return id === undefined ? null : ` · ${TERRAIN_NAMES[id] ?? `terreno ${id}`}`;
+          })()}
         </div>
       ) : null}
 

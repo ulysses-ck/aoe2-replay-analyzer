@@ -60,6 +60,18 @@ export type Highlight = {
   apm?: number;
 };
 
+/**
+ * Grilla de terreno del mapa, una entrada por tile en orden row-major
+ * (`índice = y * dimension + x`, verificado contra los edificios).
+ */
+export type TerrainModel = {
+  dimension: number;
+  /** Id de terreno de DE por tile (0=grass, 10=bosque, 22=agua profunda, …). */
+  terrain: number[];
+  /** Nivel de elevación (0-7) por tile; se usa para el shading. */
+  elevation: number[];
+};
+
 export type ReplayModel = {
   meta: {
     fileName: string;
@@ -88,6 +100,8 @@ export type ReplayModel = {
   interactions?: InteractionEvent[];
   /** Batallas, raids y picos de APM detectados sobre las órdenes. */
   highlights?: Highlight[];
+  /** Terreno real del mapa; falta si la cabecera no se pudo leer. */
+  terrain?: TerrainModel;
 };
 
 /** Paleta de colores de jugador de AoE2 DE, indexada por `color_id`. */

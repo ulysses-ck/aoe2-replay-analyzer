@@ -125,6 +125,7 @@ archivo no duplica nada. No hay purga automática todavía.
 | Edades | `Chat` de sistema | `<player_id,N,AGE> ha avanzado a la Edad …` |
 | Chat de jugadores | `Chat` | |
 | Cámara del jugador grabado | `Viewlock` | ~1 muestra cada ~100 ms, comprimida a los cambios |
+| Terreno del mapa (`terrain_id`, elevación por tile) | cabecera (tiles de `agelens`) | row-major, `índice = y·dim + x` |
 
 **No** hay recursos, kills, HP ni posiciones continuas: el replay guarda órdenes, no estado.
 Cualquier métrica de esos ejes requiere simular el motor o mostrar un proxy.
@@ -144,6 +145,27 @@ encuadre. El botón **Heatmap de mirada** dibuja encima la densidad de la misma
 serie (celdas de 3 tiles, alpha por raíz del conteo) acumulada hasta el instante.
 Si el replay no trae viewlocks (pasa en algunos `SP`), ninguno de los dos botones
 aparece.
+
+### Terreno real
+
+La cabecera del replay trae la grilla de tiles del mapa (`terrain_id` +
+elevación por tile). El worker la extrae con `parseHeader` de `agelens`,
+**concurrente con el parse principal** (sólo lee la cabecera, 1.5-5 s), así que
+el terreno está disponible en ambos motores.
+
+La orientación está verificada empíricamente (`scripts/probe-tile-order3.mjs`):
+los edificios del body caen sobre agua o bosque un ~12% con `índice = y·dim + x`
+contra 25-28% con las hipótesis alternativas (transpose y flips). El ~12%
+restante es real: el header guarda el mapa **inicial**, y durante la partida se
+tala bosque y se construyen muelles sobre agua.
+
+El render es un canvas offscreen de **1 píxel por tile** en espacio de mapa con
+paleta por categorías (pasto/agua/bosque/nieve/arena/granja, del enum
+`TerrainId` de AoE2ScenarioParser, que cubre hasta los terrains de los DLCs más
+nuevos) y shading por elevación; por frame se dibuja una sola vez con una
+transform isométrica (`drawImage`), porque 48.400 diamantes por frame no
+sería viable. Sin terreno (cabecera no parseable) queda el rombo plano de
+siempre.
 
 ### Highlights
 
@@ -207,4 +229,5 @@ edificios/movimientos/mensajes salieron.
 ## Siguiente
 
 - Marcar los highlights en la propia línea de tiempo, no sólo en la lista.
-- Terreno real desde los tiles de `agelens`.
+- Heatmap de mirada por jugador (ahora es del dueño only).
+- Sombrear los tiles sin explorar desde el punto de vista del dueño.

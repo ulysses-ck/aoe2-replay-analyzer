@@ -15,8 +15,19 @@ import path from "node:path";
 const CACHE_DIR = process.env.REPLAY_CACHE_DIR || path.join(process.cwd(), ".cache", "replays");
 const ID_LENGTH = 16;
 
+/**
+ * Versión del shape del modelo. Se mezcla en el hash del id: si el modelo
+ * cambia (p. ej. cuando se agregó `terrain`), los ids cambian y el cache viejo
+ * queda inaccesible en vez de servir modelos incompletos para siempre.
+ */
+const MODEL_VERSION = "3-terrain";
+
 export function replayId(buffer: ArrayBuffer): string {
-  return createHash("sha256").update(new Uint8Array(buffer)).digest("hex").slice(0, ID_LENGTH);
+  return createHash("sha256")
+    .update(MODEL_VERSION)
+    .update(new Uint8Array(buffer))
+    .digest("hex")
+    .slice(0, ID_LENGTH);
 }
 
 /** Valida el id antes de tocarlo: sólo hex, para no escapar del directorio. */
