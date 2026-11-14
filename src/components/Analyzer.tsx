@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import MapCanvas from "./MapCanvas";
+import { RaidIcon, BattleIcon, ApmIcon } from "./icons";
 import { formatTime, playerColor, type ReplayModel } from "@/lib/types";
 import { API_BASE } from "@/lib/api-base";
 
@@ -259,6 +260,17 @@ export default function Analyzer() {
             <h2 className="mb-2 text-[11px] uppercase tracking-wider text-zinc-500">
               Highlights
             </h2>
+            <div className="mb-2 flex gap-3 text-[10px] text-zinc-500">
+              <span className="flex items-center gap-1 text-orange-400">
+                <RaidIcon size={10} /> raid
+              </span>
+              <span className="flex items-center gap-1 text-zinc-300">
+                <BattleIcon size={10} /> batalla
+              </span>
+              <span className="flex items-center gap-1 text-violet-400">
+                <ApmIcon size={10} /> APM
+              </span>
+            </div>
             {(() => {
               const list = model.highlights ?? [];
               if (list.length === 0) {
@@ -297,14 +309,22 @@ export default function Analyzer() {
                           <span
                             aria-hidden
                             className={[
-                              "h-2 w-2 shrink-0 rounded-full",
+                              "shrink-0",
                               highlight.kind === "raid"
-                                ? "bg-orange-400"
+                                ? "text-orange-400"
                                 : highlight.kind === "battle"
-                                  ? "bg-zinc-300"
-                                  : "bg-violet-400",
+                                  ? "text-zinc-300"
+                                  : "text-violet-400",
                             ].join(" ")}
-                          />
+                          >
+                            {highlight.kind === "raid" ? (
+                              <RaidIcon size={12} />
+                            ) : highlight.kind === "battle" ? (
+                              <BattleIcon size={12} />
+                            ) : (
+                              <ApmIcon size={12} />
+                            )}
+                          </span>
                           <span className="truncate text-zinc-300" title={`${label}: ${detail}`}>
                             {label} · <span className="text-zinc-500">{detail}</span>
                           </span>
