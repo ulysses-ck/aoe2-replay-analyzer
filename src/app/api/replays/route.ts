@@ -1,5 +1,6 @@
 import { listReplays } from "@/lib/db";
 import { preflightResponse, jsonResponse } from "@/lib/cors";
+import { backendEnabled, backendDisabledResponse } from "@/lib/api-role";
 
 export const runtime = "nodejs";
 
@@ -12,6 +13,7 @@ export async function OPTIONS(request: Request): Promise<Response> {
 }
 
 export async function GET(request: Request): Promise<Response> {
+  if (!backendEnabled()) return backendDisabledResponse();
   try {
     const url = new URL(request.url);
     const limit = Math.min(500, Math.max(1, Number(url.searchParams.get("limit")) || 200));

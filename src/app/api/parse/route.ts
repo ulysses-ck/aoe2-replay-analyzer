@@ -3,6 +3,7 @@ import { replayId } from "@/lib/replay-store";
 import { getStorage } from "@/lib/storage";
 import { upsertReplay } from "@/lib/db";
 import { corsHeaders, originAllowed, preflightResponse, jsonResponse } from "@/lib/cors";
+import { backendEnabled, backendDisabledResponse } from "@/lib/api-role";
 
 // El parser corre en un worker con WASM sobre Node: nada de edge.
 export const runtime = "nodejs";
@@ -20,6 +21,7 @@ export async function OPTIONS(request: Request): Promise<Response> {
 }
 
 export async function POST(request: Request): Promise<Response> {
+  if (!backendEnabled()) return backendDisabledResponse();
   if (!originAllowed(request)) {
     return jsonResponse(request, { error: "Origen no permitida" }, 403);
   }

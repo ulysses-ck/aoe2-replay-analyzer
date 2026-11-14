@@ -1,5 +1,6 @@
 import { getStorage } from "@/lib/storage";
 import { corsHeaders, preflightResponse } from "@/lib/cors";
+import { backendEnabled, backendDisabledResponse } from "@/lib/api-role";
 
 export const runtime = "nodejs";
 
@@ -12,6 +13,7 @@ export async function OPTIONS(request: Request): Promise<Response> {
 }
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  if (!backendEnabled()) return backendDisabledResponse();
   const { id } = await params;
   const payload = await getStorage().get(`${id}.json`);
   if (!payload) {
