@@ -60,6 +60,38 @@ Windows): con mise, `mise use -g pnpm@11.7.0` y verificar con
 `pnpm exec node -p "process.platform"` → `linux`. Si queda en `win32`, Playwright
 baja binarios de Windows y todo se rompe.
 
+## Publicar el sitio
+
+Arquitectura pensada para que el peso (parseo, storage, DB) quede en tu PC y el
+front en cualquier hosting estático:
+
+```
+[ Vercel: front ] --fetch--> [ túnel Cloudflare ] --> [ tu PC: API Next + SQLite + storage ]
+```
+
+- **Front en Vercel**: deploy normal (`pnpm build`). Configurar
+  `NEXT_PUBLIC_API_BASE=https://<tu-túnel>` (variable de build: cambiarla exige
+  re-deploy). Con la PC apagada el sitio abre, sólo falla el parseo/índice.
+- **API en tu PC**: el mismo `pnpm start`. Env vars:
+  - `ALLOWED_ORIGIN=https://tu-app.vercel.app` — única fuente de CORS (lista
+    separada por comas o `*`). Sin la var, la API queda same-origin.
+  - `REPLAY_DB_PATH` — SQLite del índice (default `.cache/replays.db`).
+  - `REPLAY_STORAGE_DIR` — dónde viven los modelos y los `.aoe2record`
+    originales (default `.cache/replays`). Guardar el original permite
+    re-parsear cuando el parser mejora, sin re-subir nada.
+  - `REPLAY_STORAGE_BACKEND` — `local-disk` hoy; el adapter
+    (`src/lib/storage.ts`) es la única pieza a implementar para pasar a S3/R2.
+- **Túnel**: `cloudflared tunnel --url http://localhost:3000` para probar
+  (URL temporaria de trycloudflare). Para dejarlo fijo, un túnel nombrado con
+  tu dominio: `cloudflared tunnel create aoe2-api` + config de ingress
+  `http://localhost:3000` + `cloudflared tunnel run aoe2-api`.
+
+Verificación de la matriz de permisos (probada): origen ajena → `403` en POST y
+sin header CORS en GET; origen en `ALLOWED_ORIGIN` → `200` con
+`access-control-allow-origin` seteado; same-origin (modo local) no cambia nada.
+
+> Nota: la DB requiere **Node 22+** (`node:sqlite` está incluido, cero deps).
+
 ## Arquitectura
 
 | Pieza | Rol |
@@ -69,6 +101,11 @@ baja binarios de Windows y todo se rompe.
 | `src/lib/replay-store.ts` | Cache en disco por hash del archivo (deep links) |
 | `src/app/api/parse/route.ts` | `POST /api/parse` (multipart `file`) → JSON |
 | `src/app/api/replay/[id]/route.ts` | `GET /api/replay/<id>` → modelo cacheado |
+| `src/app/api/replays/route.ts` | `GET /api/replays` → índice para el dashboard |
+| `src/lib/storage.ts` | Adapter de storage (`local-disk` hoy; `s3` después) |
+| `src/lib/db.ts` | SQLite (`node:sqlite`): índice de replays |
+| `src/lib/cors.ts` | CORS para el front publicado (env `ALLOWED_ORIGIN`) |
+| `src/app/replays/page.tsx` | Dashboard "Mis replays" |
 | `src/components/Analyzer.tsx` | Layout, upload, timeline, reloj de reproducción |
 | `src/components/MapCanvas.tsx` | Canvas isométrico con zoom anclado y pan |
 | `src/lib/types.ts` | Tipos compartidos y paleta de colores de jugador |

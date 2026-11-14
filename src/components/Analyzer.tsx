@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import MapCanvas from "./MapCanvas";
 import { formatTime, playerColor, type ReplayModel } from "@/lib/types";
+import { API_BASE } from "@/lib/api-base";
 
 const SPEEDS = [1, 2, 4, 8, 16, 32];
 
@@ -27,7 +28,7 @@ export default function Analyzer() {
     try {
       const form = new FormData();
       form.append("file", file);
-      const response = await fetch("/api/parse", { method: "POST", body: form });
+      const response = await fetch(`${API_BASE}/api/parse`, { method: "POST", body: form });
       const payload = await response.json();
       if (!response.ok) {
         setError(payload?.detail || payload?.error || `Error ${response.status}`);
@@ -51,7 +52,7 @@ export default function Analyzer() {
     if (!id) return;
     let cancelled = false;
     setBusy(true);
-    fetch(`/api/replay/${id}`)
+    fetch(`${API_BASE}/api/replay/${id}`)
       .then((response) => (response.ok ? response.json() : Promise.reject(new Error("no encontrado"))))
       .then((payload: ReplayModel) => {
         if (cancelled) return;
@@ -203,6 +204,12 @@ export default function Analyzer() {
           >
             Otro replay
           </button>
+          <a
+            href="/replays"
+            className="rounded-md border border-white/15 px-2 py-1 text-zinc-300 transition hover:bg-white/10"
+          >
+            Mis replays
+          </a>
           <input
             ref={inputRef}
             type="file"
