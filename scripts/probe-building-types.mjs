@@ -8,35 +8,11 @@
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 
-const ACTION_PREFIX = 3;
 // Los mismos del worker (verificados en scripts/probe-actions.mjs).
 const ACTION_BUILD = 102;
+const ACTION_PREFIX = 3;
 
-function buildingTypeIds(file) {
-  const buf = readFileSync(file);
-  const agelens = null; // placeholder para lint
-  void agelens;
-  return import("agelens").then((agelens) => {
-    const recording = agelens.parseRecording(buf);
-    const counts = new Map();
-    for (const op of recording.operations ?? []) {
-      const payload = op.payload ?? {};
-      if (typeof payload.increment === "number") continue;
-      if (op.actionId === undefined || typeof payload.raw?.data !== "string") continue;
-      const bytes = Buffer.from(payload.raw.data, "hex");
-      if (bytes.length <= ACTION_PREFIX) continue;
-      const dv = new DataView(bytes.buffer, bytes.byteOffset + ACTION_PREFIX, bytes.length - ACTION_PREFIX);
-      const playerId = bytes[0];
-      if (op.actionId === ACTION_BUILD) {
-        const typeId = dv.getUint32(12, true);
-        counts.set(typeId, (counts.get(typeId) ?? 0) + 1);
-      }
-    }
-    return { file, counts };
-  });
-}
-
-// IDs clásicos de AoE2 (conq/genie, los mismos que usa aoe2.gg):
+// IDs clásicos de AoE2 (dataset conq/genie — los que usa aoe2.gg).
 const KNOWN = {
   70: "house",
   50: "farm",
@@ -53,9 +29,35 @@ const KNOWN = {
   82: "castle",
   84: "watch-tower",
   23416: "bombard-tower",
-  209: "market", // 209? el de aoe2.gg era piedra-recurso; el market clásico es 84? corregir con datos
-  276: "page", // placeholder
+  276: "gate",
+  487: "palisade-gate",
+  155: "outpost",
+  476: "krepost",
+  1254: "donjon",
+  1517: "feitoria",
 };
+
+async function buildingTypeIds(file) {
+  const buf = readFileSync(file);
+  const agelens = await import("agelens");
+  // parseRecording espera una vista Uint8Array (un Buffer suelto devuelve un
+  // recording vacío, silenciosamente).
+  const recording = await agelens.parseRecording(new Uint8Array(buf));
+  const counts = new Map();
+  for (const op of recording.operations ?? []) {
+    const payload = op.payload ?? {};
+    if (typeof payload.increment === "number") continue;
+    if (op.actionId === undefined || typeof payload.raw?.data !== "string") continue;
+    const bytes = Buffer.from(payload.raw.data, "hex");
+    if (bytes.length <= ACTION_PREFIX) continue;
+    const dv = new DataView(bytes.buffer, bytes.byteOffset + ACTION_PREFIX, bytes.length - ACTION_PREFIX);
+    if (op.actionId === ACTION_BUILD) {
+      const typeId = dv.getUint32(12, true);
+      counts.set(typeId, (counts.get(typeId) ?? 0) + 1);
+    }
+  }
+  return { file, counts };
+}
 
 const args = process.argv.slice(2);
 let files = args;

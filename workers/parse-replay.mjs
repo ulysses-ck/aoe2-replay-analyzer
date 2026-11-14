@@ -110,6 +110,54 @@ function decodeBuild(data) {
   return { x, y, typeId, objectId };
 }
 
+function inferStartingTownCenters({ players, buildings, moves, interactions, viewlocks }) {
+  const result = [];
+  const existingTCs = buildings.filter((b) => b.typeId === 109 || b.typeId === 621 || b.typeId === 71);
+  const initialView = viewlocks?.[0];
+
+  for (const player of players) {
+    const hasEarlyTC = existingTCs.some((b) => b.playerId === player.id && b.t < 300_000);
+    if (hasEarlyTC) continue;
+
+    const points = [];
+    if (player.owner && initialView) {
+      points.push({ x: initialView[1], y: initialView[2], weight: 6.0 });
+    }
+    const earlyInteractions = (interactions ?? []).filter((i) => i.playerId === player.id && i.t < 60_000);
+    for (const inter of earlyInteractions) points.push({ x: inter.x, y: inter.y, weight: 2.5 });
+
+    const earlyBuildings = buildings.filter((b) => b.playerId === player.id && b.t < 60_000);
+    for (const b of earlyBuildings) points.push({ x: b.x, y: b.y, weight: 2.0 });
+
+    const earlyMoves = moves.filter((m) => m.playerId === player.id && m.t < 40_000).slice(0, 8);
+    for (const m of earlyMoves) points.push({ x: m.x, y: m.y, weight: 1.0 });
+
+    if (points.length === 0) {
+      const anyInteractions = (interactions ?? []).filter((i) => i.playerId === player.id).slice(0, 3);
+      for (const inter of anyInteractions) points.push({ x: inter.x, y: inter.y, weight: 2.0 });
+      const anyBuildings = buildings.filter((b) => b.playerId === player.id).slice(0, 2);
+      for (const b of anyBuildings) points.push({ x: b.x, y: b.y, weight: 2.0 });
+      const anyMoves = moves.filter((m) => m.playerId === player.id).slice(0, 5);
+      for (const m of anyMoves) points.push({ x: m.x, y: m.y, weight: 1.0 });
+    }
+
+    if (points.length > 0) {
+      const totalWeight = points.reduce((acc, p) => acc + p.weight, 0);
+      const avgX = points.reduce((acc, p) => acc + p.x * p.weight, 0) / totalWeight;
+      const avgY = points.reduce((acc, p) => acc + p.y * p.weight, 0) / totalWeight;
+      result.push({
+        t: 0,
+        playerId: player.id,
+        x: Math.round(avgX),
+        y: Math.round(avgY),
+        typeId: 109,
+        objectId: 0,
+      });
+    }
+  }
+  return result;
+}
+
 function parseWithAoe2rec(buffer, fileName) {
   const summary = parse_rec_summary(buffer);
   const header = summary.header;
@@ -210,6 +258,9 @@ function parseWithAoe2rec(buffer, fileName) {
       }
     }
   }
+
+  const startingTCs = inferStartingTownCenters({ players, buildings, moves, interactions, viewlocks });
+  if (startingTCs.length > 0) buildings.unshift(...startingTCs);
 
   return {
     meta: {
@@ -321,6 +372,9 @@ function parseWithAgelens(recording, fileName) {
       moves.push({ t: clock, playerId, x, y, count: 0 });
     }
   }
+
+  const startingTCs = inferStartingTownCenters({ players, buildings, moves, interactions, viewlocks });
+  if (startingTCs.length > 0) buildings.unshift(...startingTCs);
 
   return {
     meta: {

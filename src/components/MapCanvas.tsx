@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { playerColor, type ReplayModel } from "@/lib/types";
-import { getBuildingInfo, drawBuildingIcon } from "@/lib/buildings";
+import { getBuildingInfo, drawBuildingIcon, inferStartingTownCenters } from "@/lib/buildings";
 
 type View = {
   /** Centro del viewport en píxeles del canvas. */
@@ -228,6 +228,11 @@ export default function MapCanvas({
 
   const mapSize = model.meta.mapSize || 200;
   const terrainCanvas = useMemo(() => (model.terrain ? buildTerrainCanvas(model.terrain) : null), [model.terrain]);
+  const allBuildings = useMemo(() => {
+    const inferred = inferStartingTownCenters(model);
+    if (inferred.length === 0) return model.buildings;
+    return [...inferred, ...model.buildings];
+  }, [model]);
 
   const clampUnit = useCallback(
     (unit: number, s: Size) => {
@@ -529,7 +534,7 @@ export default function MapCanvas({
 
     // Edificios: ordenados por profundidad isométrica (de atrás hacia adelante).
     // Prisma según huella y altura del edificio + icono vectorial distintivo.
-    const visibleBuildings = model.buildings
+    const visibleBuildings = allBuildings
       .filter((b) => b.t <= time)
       .sort((a, b) => a.x + a.y - (b.x + b.y));
 
@@ -608,7 +613,7 @@ export default function MapCanvas({
         ctx.stroke();
       }
     }
-  }, [model, time, size, mapSize, zoomPct, tick, heatmap, terrainCanvas]);
+  }, [model, time, size, mapSize, zoomPct, tick, heatmap, terrainCanvas, allBuildings]);
 
   return (
     <div ref={wrapRef} className="relative h-full w-full overflow-hidden">
@@ -663,7 +668,7 @@ export default function MapCanvas({
           tile {hover.x}, {hover.y}
           {(() => {
             // Edificio más cercano al tile sobre el que se pasa el cursor
-            const hitBuilding = model.buildings.find(
+            const hitBuilding = allBuildings.find(
               (b) =>
                 b.t <= time &&
                 Math.hypot(b.x - hover.x, b.y - hover.y) <= Math.max(1.2, getBuildingInfo(b.typeId).footprint),

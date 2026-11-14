@@ -5,6 +5,8 @@
  * factores de huella isométrica (footprint) y renderizado de glifos vectoriales en Canvas.
  */
 
+import type { BuildingEvent, ReplayModel } from "./types";
+
 export type BuildingCategory =
   | "town_center"
   | "house"
@@ -38,10 +40,10 @@ export type BuildingInfo = {
 };
 
 const BUILDING_DATABASE: Record<number, BuildingInfo> = {
-  // Centros Urbanos (4x4)
-  109: { name: "Centro Urbano", category: "town_center", footprint: 1.8, liftFactor: 1.5 },
-  621: { name: "Centro Urbano", category: "town_center", footprint: 1.8, liftFactor: 1.5 },
-  71: { name: "Centro Urbano", category: "town_center", footprint: 1.8, liftFactor: 1.5 },
+  // Centros Urbanos (4x4, gran presencia)
+  109: { name: "Centro Urbano", category: "town_center", footprint: 2.1, liftFactor: 1.6 },
+  621: { name: "Centro Urbano", category: "town_center", footprint: 2.1, liftFactor: 1.6 },
+  71: { name: "Centro Urbano", category: "town_center", footprint: 2.1, liftFactor: 1.6 },
 
   // Casas (2x2)
   70: { name: "Casa", category: "house", footprint: 0.9, liftFactor: 1.05 },
@@ -168,29 +170,51 @@ export function drawBuildingIcon(
 
   switch (category) {
     case "town_center": {
-      // Castillo / Centro Urbano con portal de arco y almenas
-      const w = size * 0.9;
-      const h = size * 0.85;
+      // Centro Urbano (TC): Gran pabellón cívico con la emblemática Campana Dorada (Town Bell)
+      const w = size * 0.95;
+      const h = size * 0.9;
+
+      // 1. Estructura del pabellón / campanario (pilares laterales y frontón superior)
       fillAndStroke(() => {
         ctx.beginPath();
-        ctx.moveTo(cx - w, cy + h);
-        ctx.lineTo(cx - w, cy - h * 0.5);
-        ctx.lineTo(cx - w * 0.6, cy - h * 0.5);
-        ctx.lineTo(cx - w * 0.6, cy - h * 0.2);
-        ctx.lineTo(cx - w * 0.25, cy - h * 0.2);
-        ctx.lineTo(cx - w * 0.25, cy - h); // Torre central
-        ctx.lineTo(cx + w * 0.25, cy - h);
-        ctx.lineTo(cx + w * 0.25, cy - h * 0.2);
-        ctx.lineTo(cx + w * 0.6, cy - h * 0.2);
-        ctx.lineTo(cx + w * 0.6, cy - h * 0.5);
-        ctx.lineTo(cx + w, cy - h * 0.5);
-        ctx.lineTo(cx + w, cy + h);
-        // Puerta arqueada central
-        ctx.lineTo(cx + w * 0.35, cy + h);
-        ctx.arc(cx, cy + h, w * 0.35, 0, Math.PI, true);
-        ctx.lineTo(cx - w, cy + h);
+        // Techo frontón
+        ctx.moveTo(cx, cy - h * 1.15);
+        ctx.lineTo(cx + w, cy - h * 0.45);
+        ctx.lineTo(cx + w * 0.75, cy - h * 0.45);
+        // Columna derecha
+        ctx.lineTo(cx + w * 0.75, cy + h * 0.9);
+        ctx.lineTo(cx + w * 0.45, cy + h * 0.9);
+        ctx.lineTo(cx + w * 0.45, cy - h * 0.2);
+        // Bóveda interior
+        ctx.arc(cx, cy - h * 0.2, w * 0.45, 0, Math.PI, true);
+        // Columna izquierda
+        ctx.lineTo(cx - w * 0.45, cy + h * 0.9);
+        ctx.lineTo(cx - w * 0.75, cy + h * 0.9);
+        ctx.lineTo(cx - w * 0.75, cy - h * 0.45);
+        ctx.lineTo(cx - w, cy - h * 0.45);
         ctx.closePath();
-      });
+      }, "#f8fafc");
+
+      // 2. La mítica Campana de alarma (Town Bell) dorada y acampanada
+      const bw = w * 0.42;
+      fillAndStroke(() => {
+        ctx.beginPath();
+        // Corona/yugo de la campana
+        ctx.moveTo(cx - bw * 0.35, cy - h * 0.22);
+        ctx.lineTo(cx + bw * 0.35, cy - h * 0.22);
+        // Cuerpo curvado acampanado
+        ctx.lineTo(cx + bw * 0.3, cy - h * 0.05);
+        ctx.quadraticCurveTo(cx + bw * 0.35, cy + h * 0.25, cx + bw * 0.9, cy + h * 0.42);
+        ctx.lineTo(cx - bw * 0.9, cy + h * 0.42);
+        ctx.quadraticCurveTo(cx - bw * 0.35, cy + h * 0.25, cx - bw * 0.3, cy - h * 0.05);
+        ctx.closePath();
+      }, "#fbbf24", "rgba(10, 10, 15, 0.9)");
+
+      // 3. Badajo esférico colgando en el centro
+      fillAndStroke(() => {
+        ctx.beginPath();
+        ctx.arc(cx, cy + h * 0.58, bw * 0.22, 0, Math.PI * 2);
+      }, "#fef08a", "rgba(10, 10, 15, 0.9)");
       break;
     }
 
@@ -592,4 +616,87 @@ export function drawBuildingIcon(
       break;
     }
   }
+}
+
+/**
+ * Infiere y asegura que cada jugador tenga su Centro Urbano inicial en t=0.
+ *
+ * En AoE2 estándar cada civilización arranca con un TC en su base, pero las
+ * grabaciones sólo registran las acciones BUILD creadas posteriormente.
+ * Para jugadores que no construyeron un TC muy temprano (mapas Nomad),
+ * estimamos la posición de su base a partir de su cámara inicial o sus primeras órdenes.
+ */
+export function inferStartingTownCenters(model: ReplayModel): BuildingEvent[] {
+  const result: BuildingEvent[] = [];
+  const existingTCs = model.buildings.filter(
+    (b) => b.typeId === 109 || b.typeId === 621 || b.typeId === 71,
+  );
+
+  const initialView = model.viewlocks?.[0];
+
+  for (const player of model.players) {
+    // Si ya tiene un TC en t=0 o construyó uno muy temprano (mapa Nomad, t < 5 min), no inferimos
+    const hasEarlyTC = existingTCs.some(
+      (b) => b.playerId === player.id && b.t < 300_000,
+    );
+    if (hasEarlyTC) continue;
+
+    const points: Array<{ x: number; y: number; weight: number }> = [];
+
+    // 1. Cámara inicial del jugador (si es el dueño de la grabación, muy precisa)
+    if (player.owner && initialView) {
+      points.push({ x: initialView[1], y: initialView[2], weight: 6.0 });
+    }
+
+    // 2. Interacciones tempranas (recolectar ovejas/árboles en el TC, t < 60s)
+    const earlyInteractions = (model.interactions ?? []).filter(
+      (i) => i.playerId === player.id && i.t < 60_000,
+    );
+    for (const inter of earlyInteractions) {
+      points.push({ x: inter.x, y: inter.y, weight: 2.5 });
+    }
+
+    // 3. Primeras construcciones (casas iniciales alrededor del TC, t < 60s)
+    const earlyBuildings = model.buildings.filter(
+      (b) => b.playerId === player.id && b.t < 60_000,
+    );
+    for (const b of earlyBuildings) {
+      points.push({ x: b.x, y: b.y, weight: 2.0 });
+    }
+
+    // 4. Primeras órdenes de movimiento (t < 40s)
+    const earlyMoves = model.moves
+      .filter((m) => m.playerId === player.id && m.t < 40_000)
+      .slice(0, 8);
+    for (const m of earlyMoves) {
+      points.push({ x: m.x, y: m.y, weight: 1.0 });
+    }
+
+    // Si no hubo acciones en los primeros 60s (jugador AFK o tardío), buscamos sus primeras acciones globales
+    if (points.length === 0) {
+      const anyInteractions = (model.interactions ?? []).filter((i) => i.playerId === player.id).slice(0, 3);
+      for (const inter of anyInteractions) points.push({ x: inter.x, y: inter.y, weight: 2.0 });
+      const anyBuildings = model.buildings.filter((b) => b.playerId === player.id).slice(0, 2);
+      for (const b of anyBuildings) points.push({ x: b.x, y: b.y, weight: 2.0 });
+      const anyMoves = model.moves.filter((m) => m.playerId === player.id).slice(0, 5);
+      for (const m of anyMoves) points.push({ x: m.x, y: m.y, weight: 1.0 });
+    }
+
+    if (points.length > 0) {
+      const totalWeight = points.reduce((acc, p) => acc + p.weight, 0);
+      const avgX = points.reduce((acc, p) => acc + p.x * p.weight, 0) / totalWeight;
+      const avgY = points.reduce((acc, p) => acc + p.y * p.weight, 0) / totalWeight;
+
+      result.push({
+        t: 0,
+        playerId: player.id,
+        x: Math.round(avgX),
+        y: Math.round(avgY),
+        typeId: 109,
+        objectId: 0,
+      });
+    }
+  }
+
+  return result;
 }
