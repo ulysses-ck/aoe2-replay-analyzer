@@ -182,6 +182,9 @@ La heurística es conservadora a propósito: un highlight falso es peor que ning
 La lista vive en el sidebar; clickear uno salta al instante y centra el mapa en
 el choque, donde queda un anillo que pulsa unos segundos.
 
+Los mismos eventos aparecen como **ticks sobre la línea de tiempo** (naranja =
+raid, blanco = batalla, violeta = APM), clickeables con el mismo salto.
+
 ## Atajos
 
 | Tecla | Acción |
@@ -228,6 +231,6 @@ edificios/movimientos/mensajes salieron.
 
 ## Siguiente
 
-- Marcar los highlights en la propia línea de tiempo, no sólo en la lista.
 - Heatmap de mirada por jugador (ahora es del dueño only).
 - Sombrear los tiles sin explorar desde el punto de vista del dueño.
+- Colapsar los raids encadenados en "oleadas" para la línea de tiempo.

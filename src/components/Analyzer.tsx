@@ -361,6 +361,52 @@ export default function Analyzer() {
           </div>
 
           <div className="border-t border-white/10 px-4 py-3">
+            {/* Tira de highlights sobre la barra: un tick por evento, color por
+                tipo, click salta al instante (igual que la lista del sidebar). */}
+            {(model.highlights?.length ?? 0) > 0 && meta.durationMs > 0 ? (
+              <div className="relative mb-1 h-3">
+                {(model.highlights ?? []).map((highlight, index) => {
+                  const label =
+                    highlight.kind === "raid"
+                      ? "Raid"
+                      : highlight.kind === "battle"
+                        ? "Batalla"
+                        : "Pico de APM";
+                  const names =
+                    highlight.kind === "apm"
+                      ? `${highlight.apm}/min`
+                      : highlight.players
+                          .map((id) => model.players.find((p) => p.id === id)?.name ?? `P${id}`)
+                          .join(" vs ");
+                  return (
+                    <button
+                      key={`tick-${highlight.kind}-${index}`}
+                      type="button"
+                      aria-label={`${label} a las ${formatTime(highlight.t)}`}
+                      title={`${formatTime(highlight.t)} · ${label} · ${names}`}
+                      onClick={() => {
+                        setTime(highlight.t);
+                        setPlaying(false);
+                        if (highlight.x !== undefined && highlight.y !== undefined) {
+                          setFocus({ x: highlight.x, y: highlight.y, nonce: Date.now() });
+                        }
+                      }}
+                      className={[
+                        "absolute top-0 h-3 w-[3px] -translate-x-1/2 cursor-pointer rounded-full opacity-70 transition hover:scale-y-125 hover:opacity-100",
+                        highlight.kind === "raid"
+                          ? "bg-orange-400"
+                          : highlight.kind === "battle"
+                            ? "bg-zinc-300"
+                            : "bg-violet-400",
+                      ].join(" ")}
+                      style={{
+                        left: `${(Math.min(highlight.t, meta.durationMs) / meta.durationMs) * 100}%`,
+                      }}
+                    />
+                  );
+                })}
+              </div>
+            ) : null}
             <input
               type="range"
               min={0}
