@@ -13,7 +13,7 @@ MVP funcional. Verificado end-to-end con un replay real de 7.25 MB (91.9 min, ma
 
 ## Cómo correrlo
 
-Requisitos: Node 20+ y pnpm.
+Requisitos: **Node 20.11+** (probado con Node 26) y **pnpm 11**.
 
 ```bash
 pnpm install
@@ -31,6 +31,34 @@ Para probar el build de producción:
 pnpm build
 pnpm start
 ```
+
+> **Ojo con `pnpm start` tras tocar el worker:** Turbopack compila
+> `workers/parse-replay.mjs` como entry propio, así que los cambios en el
+> parser requieren rebuild. En `pnpm dev` se ven al toque. Detalle en
+> [Arquitectura](#por-qué-un-worker).
+
+### Verificaciones E2E
+
+Los scripts en `scripts/` usan Playwright (requiere `pnpm exec playwright install
+chromium`) y toman el replay como argumento, con el server corriendo en `:3000`:
+
+```bash
+node scripts/capture.mjs <replay.aoe2record> <carpeta-salida>   # flujo completo + deep link
+node scripts/check-follow.mjs <replay.aoe2record>               # cámara del dueño
+node scripts/check-heatmap.mjs <replay.aoe2record>              # heatmap de mirada
+node scripts/check-highlights.mjs <replay.aoe2record>           # salto a highlights
+node scripts/probe-tile-order3.mjs <carpeta-savegame>           # orientación de tiles (sonda)
+```
+
+Los replays nunca salen de tu máquina: el parseo corre en el server y el archivo
+no se persiste; el cache guarda el modelo parseado, no el `.aoe2record`.
+
+### WSL
+
+En WSL asegurarse de que `pnpm` y `node` sean Linux (no los shims `.CMD` de
+Windows): con mise, `mise use -g pnpm@11.7.0` y verificar con
+`pnpm exec node -p "process.platform"` → `linux`. Si queda en `win32`, Playwright
+baja binarios de Windows y todo se rompe.
 
 ## Arquitectura
 
