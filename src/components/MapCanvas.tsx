@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { playerColor, type ReplayModel } from "@/lib/types";
+import { getBuildingInfo, drawBuildingIcon } from "@/lib/buildings";
 
 type View = {
   /** Centro del viewport en píxeles del canvas. */
@@ -526,15 +527,22 @@ export default function MapCanvas({
     }
     ctx.globalAlpha = 1;
 
-    // Edificios: prisma isométrico con techo y dos caras sombreadas.
-    const fp = Math.max(2.5, unit * 0.95); // semiancho del rombo de base
-    const lift = Math.max(3, unit * 1.25); // altura del volumen
-    for (const b of model.buildings) {
-      if (b.t > time) continue;
+    // Edificios: ordenados por profundidad isométrica (de atrás hacia adelante).
+    // Prisma según huella y altura del edificio + icono vectorial distintivo.
+    const visibleBuildings = model.buildings
+      .filter((b) => b.t <= time)
+      .sort((a, b) => a.x + a.y - (b.x + b.y));
+
+    for (const b of visibleBuildings) {
       const color = colorOf(b.playerId);
+      const info = getBuildingInfo(b.typeId);
       const x = px(b.x, b.y);
       const y = py(b.x, b.y);
       const fresh = time - b.t < 2500;
+
+      // Huella y altura específicas del tipo de edificio
+      const fp = Math.max(2.5, unit * info.footprint);
+      const lift = Math.max(1, unit * info.liftFactor);
       const half = fp * 0.5;
 
       // Puntos del rombo de base.
@@ -543,40 +551,49 @@ export default function MapCanvas({
       const bottom = { x, y: y + half };
       const left = { x: x - fp, y };
 
-      // Cara izquierda.
-      ctx.beginPath();
-      ctx.moveTo(left.x, left.y);
-      ctx.lineTo(bottom.x, bottom.y);
-      ctx.lineTo(bottom.x, bottom.y - lift);
-      ctx.lineTo(left.x, left.y - lift);
-      ctx.closePath();
-      ctx.fillStyle = shade(color, 0.45);
-      ctx.fill();
+      // Para granjas (terreno casi plano), no levantamos caras verticales altas
+      if (info.category !== "farm") {
+        // Cara izquierda.
+        ctx.beginPath();
+        ctx.moveTo(left.x, left.y);
+        ctx.lineTo(bottom.x, bottom.y);
+        ctx.lineTo(bottom.x, bottom.y - lift);
+        ctx.lineTo(left.x, left.y - lift);
+        ctx.closePath();
+        ctx.fillStyle = shade(color, 0.45);
+        ctx.fill();
 
-      // Cara derecha.
-      ctx.beginPath();
-      ctx.moveTo(bottom.x, bottom.y);
-      ctx.lineTo(right.x, right.y);
-      ctx.lineTo(right.x, right.y - lift);
-      ctx.lineTo(bottom.x, bottom.y - lift);
-      ctx.closePath();
-      ctx.fillStyle = shade(color, 0.28);
-      ctx.fill();
+        // Cara derecha.
+        ctx.beginPath();
+        ctx.moveTo(bottom.x, bottom.y);
+        ctx.lineTo(right.x, right.y);
+        ctx.lineTo(right.x, right.y - lift);
+        ctx.lineTo(bottom.x, bottom.y - lift);
+        ctx.closePath();
+        ctx.fillStyle = shade(color, 0.28);
+        ctx.fill();
+      }
 
-      // Techo.
+      // Techo / Superficie del edificio.
       ctx.beginPath();
       ctx.moveTo(top.x, top.y - lift);
       ctx.lineTo(right.x, right.y - lift);
       ctx.lineTo(bottom.x, bottom.y - lift);
       ctx.lineTo(left.x, left.y - lift);
       ctx.closePath();
-      ctx.fillStyle = shade(color, 1.05);
+      ctx.fillStyle = info.category === "farm" ? shade(color, 0.75) : shade(color, 1.05);
       ctx.fill();
 
-      if (unit > 6) {
+      if (unit > 5) {
         ctx.strokeStyle = "rgba(0, 0, 0, 0.55)";
         ctx.lineWidth = 1;
         ctx.stroke();
+      }
+
+      // Glifo o icono vectorial representativo según el tipo de edificio
+      if (unit >= 4.5) {
+        const iconSize = Math.min(fp * 0.65, Math.max(4.5, unit * 0.7));
+        drawBuildingIcon(ctx, info.category, x, y - lift, iconSize);
       }
 
       if (fresh) {
@@ -645,6 +662,17 @@ export default function MapCanvas({
         <div className="pointer-events-none absolute left-3 top-3 rounded-md bg-black/60 px-2 py-1 font-mono text-[11px] text-zinc-400">
           tile {hover.x}, {hover.y}
           {(() => {
+            // Edificio más cercano al tile sobre el que se pasa el cursor
+            const hitBuilding = model.buildings.find(
+              (b) =>
+                b.t <= time &&
+                Math.hypot(b.x - hover.x, b.y - hover.y) <= Math.max(1.2, getBuildingInfo(b.typeId).footprint),
+            );
+            if (hitBuilding) {
+              const bInfo = getBuildingInfo(hitBuilding.typeId);
+              const player = model.players.find((p) => p.id === hitBuilding.playerId);
+              return ` · ${bInfo.name} (${player?.name ?? `Jugador ${hitBuilding.playerId}`})`;
+            }
             const t = model.terrain;
             if (!t) return null;
             const id = t.terrain[hover.y * t.dimension + hover.x];

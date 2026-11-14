@@ -46,3 +46,4 @@ next-env.d.ts
 
 # cache de replays parseados (deep links)
 /.cache/
+.ai-memory-wiki
