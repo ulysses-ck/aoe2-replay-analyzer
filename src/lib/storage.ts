@@ -34,8 +34,13 @@ function assertSafeKey(key: string): void {
  * cache de deep links, así la migración es transparente).
  */
 function localDiskStorage(): StorageAdapter {
-  const dir = process.env.REPLAY_STORAGE_DIR || path.join(process.cwd(), ".cache", "replays");
-  const fileFor = (key: string): string => path.join(dir, key);
+  // Ruta de runtime a propósito: la carpeta de storage la elige el deploy por
+  // env, no el build. El comment opta fuera del análisis estático de Turbopack.
+  const dir =
+    process.env.REPLAY_STORAGE_DIR ||
+    path.join(/*turbopackIgnore: true*/ process.cwd(), ".cache", "replays");
+  const fileFor = (key: string): string =>
+    path.join(/*turbopackIgnore: true*/ dir, key);
   return {
     backend: "local-disk",
     async put(key, data) {

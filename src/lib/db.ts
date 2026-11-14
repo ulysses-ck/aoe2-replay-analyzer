@@ -27,7 +27,8 @@ let instance: DatabaseSync | null = null;
 function db(): DatabaseSync {
   if (instance) return instance;
   const file =
-    process.env.REPLAY_DB_PATH || path.join(process.cwd(), ".cache", "replays.db");
+    process.env.REPLAY_DB_PATH ||
+    path.join(/*turbopackIgnore: true*/ process.cwd(), ".cache", "replays.db");
   instance = new DatabaseSync(file);
   instance.exec(`
     CREATE TABLE IF NOT EXISTS replays (
