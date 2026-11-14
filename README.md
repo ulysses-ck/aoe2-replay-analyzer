@@ -139,7 +139,9 @@ lista de jugadores.
 
 Con el botón **Seguir al dueño** el viewport se centra en esa cámara y avanza con
 el reloj; arrastrar el mapa desactiva el seguimiento para no pelear por el
-encuadre. Si el replay no trae viewlocks (pasa en algunos `SP`), el botón no
+encuadre. El botón **Heatmap de mirada** dibuja encima la densidad de la misma
+serie (celdas de 3 tiles, alpha por raíz del conteo) acumulada hasta el instante.
+Si el replay no trae viewlocks (pasa en algunos `SP`), ninguno de los dos botones
 aparece.
 
 ## Atajos
@@ -189,6 +191,6 @@ edificios/movimientos/mensajes salieron.
 ## Siguiente
 
 - Usar los tiles de `agelens` para dibujar terreno real.
-- Heatmap de "a dónde miró" reusando la serie de `viewlocks`.
+- Índice de highlights (raids, batallas, picos de APM) reusando la heurística del MVP viejo.
 - Deep link al viewport (`?t=&x=&y=&z=`).
 - Índice de highlights (raids, batallas, picos de APM) reusando la heurística del MVP viejo.

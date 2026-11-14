@@ -122,6 +122,7 @@ export default function MapCanvas({
   const [hover, setHover] = useState<{ x: number; y: number } | null>(null);
   const [copied, setCopied] = useState(false);
   const [follow, setFollow] = useState(false);
+  const [heatmap, setHeatmap] = useState(false);
 
   const mapSize = model.meta.mapSize || 200;
 
@@ -319,6 +320,45 @@ export default function MapCanvas({
     const colorOf = (playerId: number) =>
       playerColor(model.players.find((p) => p.id === playerId)?.colorId ?? 0);
 
+    // Heatmap de "a dónde miró": densidad de la cámara del dueño acumulada
+    // hasta el instante actual. Celdas de ~3 tiles, alpha por raíz del conteo
+    // para que los picos no aplasten al resto.
+    if (heatmap && model.viewlocks?.length) {
+      const CELL = 3;
+      const cols = Math.ceil(N / CELL);
+      const counts = new Float32Array(cols * cols);
+      let max = 0;
+      for (const [t, x, y] of model.viewlocks) {
+        if (t > time) break;
+        const cx1 = Math.min(cols - 1, Math.max(0, Math.floor(x / CELL)));
+        const cy1 = Math.min(cols - 1, Math.max(0, Math.floor(y / CELL)));
+        const index = cy1 * cols + cx1;
+        counts[index] += 1;
+        if (counts[index] > max) max = counts[index];
+      }
+      if (max > 0) {
+        const half = CELL / 2;
+        for (let cy1 = 0; cy1 < cols; cy1 += 1) {
+          for (let cx1 = 0; cx1 < cols; cx1 += 1) {
+            const count = counts[cy1 * cols + cx1];
+            if (count === 0) continue;
+            const tileX = cx1 * CELL + half;
+            const tileY = cy1 * CELL + half;
+            ctx.globalAlpha = 0.12 + 0.5 * Math.sqrt(count / max);
+            ctx.fillStyle = "#7c3aed";
+            ctx.beginPath();
+            ctx.moveTo(px(tileX - half, tileY - half), py(tileX - half, tileY - half));
+            ctx.lineTo(px(tileX + half, tileY - half), py(tileX + half, tileY - half));
+            ctx.lineTo(px(tileX + half, tileY + half), py(tileX + half, tileY + half));
+            ctx.lineTo(px(tileX - half, tileY + half), py(tileX - half, tileY + half));
+            ctx.closePath();
+            ctx.fill();
+          }
+        }
+        ctx.globalAlpha = 1;
+      }
+    }
+
     // Movimientos: destino de cada orden. El rastro se apaga con el tiempo.
     const moveR = Math.max(1.5, unit * 0.3);
     for (const move of model.moves) {
@@ -397,7 +437,7 @@ export default function MapCanvas({
         ctx.stroke();
       }
     }
-  }, [model, time, size, mapSize, zoomPct, tick]);
+  }, [model, time, size, mapSize, zoomPct, tick, heatmap]);
 
   return (
     <div ref={wrapRef} className="relative h-full w-full overflow-hidden">
@@ -454,6 +494,21 @@ export default function MapCanvas({
       ) : null}
 
       <div className="absolute bottom-3 right-3 flex gap-2">
+        {model.viewlocks && model.viewlocks.length > 0 ? (
+          <button
+            type="button"
+            onClick={() => setHeatmap((value) => !value)}
+            aria-pressed={heatmap}
+            className={[
+              "rounded-md border px-2.5 py-1 text-xs transition",
+              heatmap
+                ? "border-violet-400/50 bg-violet-500/20 text-violet-200 hover:bg-violet-500/30"
+                : "border-white/10 bg-black/60 text-zinc-300 hover:bg-white/10",
+            ].join(" ")}
+          >
+            {heatmap ? "Heatmap activo" : "Heatmap de mirada"}
+          </button>
+        ) : null}
         {model.viewlocks && model.viewlocks.length > 0 ? (
           <button
             type="button"
