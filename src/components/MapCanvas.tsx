@@ -22,11 +22,40 @@ function fitUnit(size: Size, mapSize: number): number {
   return Math.min((size.w * 0.9) / (2 * mapSize), (size.h * 0.9) / mapSize);
 }
 
+/**
+ * Cámara del dueño en un instante dado.
+ *
+ * `viewlocks` son muestras comprimidas (sólo quedan los cambios), así que hay
+ * que buscar el último cambio anterior al instante: eso es lo que el jugador
+ * tenía en pantalla en ese momento. Devuelve null si el replay no trae cámara.
+ */
+export function viewAt(
+  viewlocks: Array<[number, number, number]> | undefined,
+  time: number,
+): { x: number; y: number } | null {
+  if (!viewlocks || viewlocks.length === 0) return null;
+  let lo = 0;
+  let hi = viewlocks.length - 1;
+  let found = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (viewlocks[mid][0] <= time) {
+      found = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  if (found < 0) return { x: viewlocks[0][1], y: viewlocks[0][2] };
+  return { x: viewlocks[found][1], y: viewlocks[found][2] };
+}
+
 /** Tile que queda en el centro del canvas para un view dado. */
 function centerTile(view: View, size: Size, mapSize: number): { x: number; y: number } {
   const u = (size.w / 2 - view.cx) / view.unit;
   const v = (size.h / 2 - view.cy) / (view.unit * 0.5);
-  return { x: (u + v + mapSize) / 2, y: (u - v + mapSize) / 2 };
+  // Inversa de px = (x+y-N)·unit, py = (y-x)·unit/2.
+  return { x: (u - v + mapSize) / 2, y: (u + v + mapSize) / 2 };
 }
 
 /** View que deja el tile (x, y) en el centro del canvas. */
@@ -92,6 +121,7 @@ export default function MapCanvas({
   const [tick, setTick] = useState(0);
   const [hover, setHover] = useState<{ x: number; y: number } | null>(null);
   const [copied, setCopied] = useState(false);
+  const [follow, setFollow] = useState(false);
 
   const mapSize = model.meta.mapSize || 200;
 
@@ -192,6 +222,20 @@ export default function MapCanvas({
     const view = viewRef.current;
     if (view && size.w > 0) syncUrl(view, size);
   }, [time, size, syncUrl]);
+
+  // Seguir la cámara del dueño (Viewlock). Sólo mueve el centro: el zoom lo
+  // decide el que mira. Si el usuario toca el mapa, se corta el seguimiento
+  // hasta que lo vuelva a activar, para no pelear por el encuadre.
+  useEffect(() => {
+    if (!follow || size.w === 0) return;
+    const target = viewAt(model.viewlocks, time);
+    const view = viewRef.current;
+    if (!target || !view) return;
+    viewRef.current = viewForTile(target, view.unit, size, mapSize);
+    setTick((value) => value + 1);
+    // Sin esto, un salto con el reloj pausado deja el deep link desactualizado.
+    syncUrl(viewRef.current, size);
+  }, [follow, time, model.viewlocks, size, mapSize, syncUrl]);
 
   const share = useCallback(async () => {
     const view = viewRef.current;
@@ -362,6 +406,8 @@ export default function MapCanvas({
         className="block h-full w-full cursor-grab touch-none active:cursor-grabbing"
         onPointerDown={(event) => {
           dragging.current = { x: event.clientX, y: event.clientY };
+          // Si el usuario agarra el mapa, deja de seguir la cámara del dueño.
+          setFollow(false);
           event.currentTarget.setPointerCapture(event.pointerId);
         }}
         onPointerMove={(event) => {
@@ -375,8 +421,9 @@ export default function MapCanvas({
           const my = event.clientY - rect.top;
           const u = (mx - view.cx) / view.unit;
           const v = (my - view.cy) / (view.unit * 0.5);
-          const tx = (u + v + mapSize) / 2;
-          const ty = (u - v + mapSize) / 2;
+          // Inversa de px = (x+y-N)·unit, py = (y-x)·unit/2.
+          const tx = (u - v + mapSize) / 2;
+          const ty = (u + v + mapSize) / 2;
           const inside = tx >= 0 && ty >= 0 && tx <= mapSize && ty <= mapSize;
           setHover(inside ? { x: Math.floor(tx), y: Math.floor(ty) } : null);
 
@@ -407,6 +454,34 @@ export default function MapCanvas({
       ) : null}
 
       <div className="absolute bottom-3 right-3 flex gap-2">
+        {model.viewlocks && model.viewlocks.length > 0 ? (
+          <button
+            type="button"
+            onClick={() => {
+              const next = !follow;
+              setFollow(next);
+              if (next) {
+                // Al activarlo, saltamos ya a la cámara de este instante.
+                const target = viewAt(model.viewlocks, time);
+                const view = viewRef.current;
+                if (target && view && size.w > 0) {
+                  viewRef.current = viewForTile(target, view.unit, size, mapSize);
+                  setTick((value) => value + 1);
+                  syncUrl(viewRef.current, size);
+                }
+              }
+            }}
+            aria-pressed={follow}
+            className={[
+              "rounded-md border px-2.5 py-1 text-xs transition",
+              follow
+                ? "border-violet-400/50 bg-violet-500/20 text-violet-200 hover:bg-violet-500/30"
+                : "border-white/10 bg-black/60 text-zinc-300 hover:bg-white/10",
+            ].join(" ")}
+          >
+            {follow ? "Siguiendo al dueño" : "Seguir al dueño"}
+          </button>
+        ) : null}
         <button
           type="button"
           onClick={share}

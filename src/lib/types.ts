@@ -1,4 +1,6 @@
-/** Tipos compartidos entre el parser (servidor) y la UI (cliente). */
+/**
+ * Tipos compartidos entre el parser (servidor) y la UI (cliente).
+ */
 
 export type Player = {
   id: number;
@@ -7,6 +9,8 @@ export type Player = {
   colorId: number;
   team: number;
   winner: boolean;
+  /** True si es el jugador que grabó la partida (su cámara está en los viewlocks). */
+  owner?: boolean;
 };
 
 export type BuildingEvent = {
@@ -54,6 +58,11 @@ export type ReplayModel = {
   buildings: BuildingEvent[];
   moves: MoveEvent[];
   chat: ChatMessage[];
+  /**
+   * Cámara del jugador que grabó, una muestra cada ~100 ms. Son miles de pares,
+   * por eso viven en su propio campo y no en `moves`.
+   */
+  viewlocks?: Array<[number, number, number]>;
 };
 
 /** Paleta de colores de jugador de AoE2 DE, indexada por `color_id`. */

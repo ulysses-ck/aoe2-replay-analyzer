@@ -123,10 +123,24 @@ archivo no duplica nada. No hay purga automática todavía.
 | Unidades entrenadas | `Action > DeQueue` | edificio + unidad + cantidad |
 | Edades | `Chat` de sistema | `<player_id,N,AGE> ha avanzado a la Edad …` |
 | Chat de jugadores | `Chat` | |
-| Cámara del jugador grabado | `Viewlock` | ~1 muestra cada 50 ms |
+| Cámara del jugador grabado | `Viewlock` | ~1 muestra cada ~100 ms, comprimida a los cambios |
 
 **No** hay recursos, kills, HP ni posiciones continuas: el replay guarda órdenes, no estado.
 Cualquier métrica de esos ejes requiere simular el motor o mostrar un proxy.
+
+### Cámara del dueño
+
+El replay graba la cámara de **quien lo grabó**, no de todos: hay una operación
+`Viewlock` por sync con `{x, y, player_id}`. Ese `player_id` es el `player_number`
+del dueño (el `rec_owner` de `Pregame` es un slot de 8 y en multijugador no
+coincide, así que no sirve para cruzar). El modelo expone la serie comprimida en
+`model.viewlocks` (`[t, x, y]`, sólo los cambios) y marca `owner: true` en la
+lista de jugadores.
+
+Con el botón **Seguir al dueño** el viewport se centra en esa cámara y avanza con
+el reloj; arrastrar el mapa desactiva el seguimiento para no pelear por el
+encuadre. Si el replay no trae viewlocks (pasa en algunos `SP`), el botón no
+aparece.
 
 ## Atajos
 
@@ -175,6 +189,6 @@ edificios/movimientos/mensajes salieron.
 ## Siguiente
 
 - Usar los tiles de `agelens` para dibujar terreno real.
-- Cámara que sigue al jugador (`Viewlock`) y heatmap de "a dónde miró".
+- Heatmap de "a dónde miró" reusando la serie de `viewlocks`.
 - Deep link al viewport (`?t=&x=&y=&z=`).
 - Índice de highlights (raids, batallas, picos de APM) reusando la heurística del MVP viejo.

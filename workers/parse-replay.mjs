@@ -48,6 +48,53 @@ function bytesOf(data) {
   return Uint8Array.from(data);
 }
 
+/** Tolerancia de tiles para decidir que la cámara no se movió. */
+const VIEW_EPSILON = 0.01;
+
+/**
+ * Comprime la serie de cámara: cada Sync trae una muestra, pero entre dos
+ * órdenes el valor se repite y no aporta nada. Igual buscamos el valor en el
+ * instante exacto, así que sólo conservamos cuando cambia de verdad.
+ */
+function pushView(out, t, x, y) {
+  const last = out[out.length - 1];
+  if (last && Math.abs(last[1] - x) < VIEW_EPSILON && Math.abs(last[2] - y) < VIEW_EPSILON) {
+    return;
+  }
+  out.push([Math.round(t), Math.round(x * 100) / 100, Math.round(y * 100) / 100]);
+}
+
+/**
+ * Dueño de la grabación.
+ *
+ * Hay dos pistas y conviene entender las dos:
+ *
+ * - `Pregame.rec_owner` es un **slot de 8** (1..8), no un `player_number`. Sirve
+ *   para replays de un solo jugador o con huecos en la lista, pero en un 3v3
+ *   multiplayer el slot no coincide con el `player_number`.
+ * - `Viewlock.player_id` sí es el `player_number` real (1..8) de quien graba, y
+ *   es el que cruza con la lista de jugadores del resumen. Lo usamos como fuente
+ *   principal y dejamos `rec_owner` sólo para el caso de un jugador.
+ */
+function ownerIdFromOps(ops) {
+  let recOwner = 0;
+  let viewPlayer = 0;
+  for (const op of ops) {
+    const pregame = op?.Pregame;
+    if (pregame) {
+      const slot = Number(pregame.rec_owner);
+      recOwner = Number.isFinite(slot) && slot > 0 && slot <= 8 ? slot : 0;
+    }
+    if (op?.Viewlock) {
+      const id = Number(op.Viewlock.player_id);
+      if (Number.isFinite(id) && id > 0) viewPlayer = id;
+      if (recOwner && viewPlayer) break;
+    }
+    if (recOwner && viewPlayer) break;
+  }
+  return viewPlayer || recOwner;
+}
+
 // ─────────────────────────── vía aoe2rec-js ───────────────────────────
 
 function decodeBuild(data) {
@@ -67,6 +114,11 @@ function parseWithAoe2rec(buffer, fileName) {
   const header = summary.header;
   const settings = header.game_settings;
 
+  // El dueño de la grabación (slot 1..8 en `rec_owner`) es el que vamos a seguir.
+  const rec = parse_rec(buffer);
+  const ops = rec?.chapters?.[0]?.operations ?? [];
+  const ownerId = ownerIdFromOps(ops);
+
   const players = [];
   const teams = Array.from(summary.teams ?? []);
   teams.forEach((team, teamIndex) => {
@@ -78,17 +130,19 @@ function parseWithAoe2rec(buffer, fileName) {
         colorId: Number(p.color_id),
         team: teamIndex + 1,
         winner: Boolean(team.winner),
+        // El dueño de la grabación es el único cuya cámara está en los viewlocks.
+        owner: Number(p.player_number) === ownerId,
       });
     }
   });
   players.sort((a, b) => a.id - b.id);
-
-  const rec = parse_rec(buffer);
-  const ops = rec?.chapters?.[0]?.operations ?? [];
+  // Un solo jugador: `rec_owner` alcanza cuando no hay viewlocks que consultar.
+  if (!ownerId && players.length === 1) players[0].owner = true;
 
   const buildings = [];
   const moves = [];
   const chat = [];
+  const viewlocks = [];
   let clock = 0;
 
   for (const op of ops) {
@@ -96,6 +150,14 @@ function parseWithAoe2rec(buffer, fileName) {
 
     if (op.Sync) {
       clock += Number(op.Sync.time_increment) || 0;
+      continue;
+    }
+
+    if (op.Viewlock) {
+      const v = op.Viewlock;
+      const x = Number(v.x);
+      const y = Number(v.y);
+      if (Number.isFinite(x) && Number.isFinite(y)) pushView(viewlocks, clock, x, y);
       continue;
     }
 
@@ -146,6 +208,7 @@ function parseWithAoe2rec(buffer, fileName) {
     buildings,
     moves,
     chat,
+    viewlocks,
   };
 }
 
@@ -169,6 +232,7 @@ function parseWithAgelens(recording, fileName) {
   const buildings = [];
   const moves = [];
   const chat = [];
+  const viewlocks = [];
 
   // `operations` viene en orden de archivo: los Sync traen el incremento de
   // tiempo y las acciones heredan el reloj acumulado.
@@ -178,6 +242,14 @@ function parseWithAgelens(recording, fileName) {
 
     if (typeof payload.increment === "number") {
       clock += payload.increment;
+      continue;
+    }
+
+    // id 3 = VIEWLOCK: el centro de cámara, dos float32.
+    if (op.id === 3) {
+      const x = Number(payload.x);
+      const y = Number(payload.y);
+      if (Number.isFinite(x) && Number.isFinite(y)) pushView(viewlocks, clock, x, y);
       continue;
     }
 
@@ -223,6 +295,7 @@ function parseWithAgelens(recording, fileName) {
     buildings,
     moves,
     chat,
+    viewlocks,
   };
 }
 
