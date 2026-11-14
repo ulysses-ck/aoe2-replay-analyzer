@@ -120,6 +120,7 @@ archivo no duplica nada. No hay purga automática todavía.
 |---|---|---|
 | Edificio construido (`t`, x, y, tipo, jugador) | `Action > Build` | binario: f32 x@4, f32 y@8, u32 tipo@12 |
 | Orden de movimiento (destino + `unit_ids`) | `Action > Move` | punto de destino, no trayectoria |
+| Ataque ordenado (objetivo + x/y) | `Action > Interact` | `target_id` u32, x/y f32; materia prima de batallas y raids |
 | Unidades entrenadas | `Action > DeQueue` | edificio + unidad + cantidad |
 | Edades | `Chat` de sistema | `<player_id,N,AGE> ha avanzado a la Edad …` |
 | Chat de jugadores | `Chat` | |
@@ -143,6 +144,21 @@ encuadre. El botón **Heatmap de mirada** dibuja encima la densidad de la misma
 serie (celdas de 3 tiles, alpha por raíz del conteo) acumulada hasta el instante.
 Si el replay no trae viewlocks (pasa en algunos `SP`), ninguno de los dos botones
 aparece.
+
+### Highlights
+
+El modelo trae `highlights` ya detectado en el worker, con tres tipos:
+
+- **Raid** (naranja): dos jugadores de equipos distintos ordenan ataques a menos
+  de 14 tiles entre sí en una ventana de 30 s, con edificios enemigos a menos de
+  12 tiles del choque. Los choques vecinos se fusionan en un solo evento.
+- **Batalla** (blanco): lo mismo, sin edificios enemigos cerca.
+- **Pico de APM** (violeta): el minuto con más acciones de cada jugador, sólo si
+  duplica su mediana y supera las 30 acciones.
+
+La heurística es conservadora a propósito: un highlight falso es peor que ninguno.
+La lista vive en el sidebar; clickear uno salta al instante y centra el mapa en
+el choque, donde queda un anillo que pulsa unos segundos.
 
 ## Atajos
 
@@ -190,7 +206,5 @@ edificios/movimientos/mensajes salieron.
 
 ## Siguiente
 
-- Usar los tiles de `agelens` para dibujar terreno real.
-- Índice de highlights (raids, batallas, picos de APM) reusando la heurística del MVP viejo.
-- Deep link al viewport (`?t=&x=&y=&z=`).
-- Índice de highlights (raids, batallas, picos de APM) reusando la heurística del MVP viejo.
+- Marcar los highlights en la propia línea de tiempo, no sólo en la lista.
+- Terreno real desde los tiles de `agelens`.

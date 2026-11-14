@@ -16,6 +16,7 @@ export default function Analyzer() {
   const [time, setTime] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(8);
+  const [focus, setFocus] = useState<{ x: number; y: number; nonce: number } | null>(null);
 
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -247,6 +248,68 @@ export default function Analyzer() {
             </ul>
           </section>
 
+          <section className="border-b border-white/10 p-3">
+            <h2 className="mb-2 text-[11px] uppercase tracking-wider text-zinc-500">
+              Highlights
+            </h2>
+            {(() => {
+              const list = model.highlights ?? [];
+              if (list.length === 0) {
+                return <p className="text-xs text-zinc-600">Sin combates detectados.</p>;
+              }
+              const nameOf = (id: number) => players.find((p) => p.id === id)?.name ?? `P${id}`;
+              return (
+                <ul className="space-y-1">
+                  {list.map((highlight, index) => {
+                    const label =
+                      highlight.kind === "raid"
+                        ? "Raid"
+                        : highlight.kind === "battle"
+                          ? "Batalla"
+                          : "Pico de APM";
+                    const detail =
+                      highlight.kind === "apm"
+                        ? `${highlight.apm}/min`
+                        : highlight.players.map(nameOf).join(" vs ");
+                    return (
+                      <li key={`${highlight.kind}-${index}`}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTime(highlight.t);
+                            setPlaying(false);
+                            if (highlight.x !== undefined && highlight.y !== undefined) {
+                              setFocus({ x: highlight.x, y: highlight.y, nonce: Date.now() });
+                            }
+                          }}
+                          className="flex w-full items-baseline gap-2 rounded px-1 py-0.5 text-left text-xs transition hover:bg-white/5"
+                        >
+                          <span className="font-mono text-[10px] text-zinc-500">
+                            {formatTime(highlight.t)}
+                          </span>
+                          <span
+                            aria-hidden
+                            className={[
+                              "h-2 w-2 shrink-0 rounded-full",
+                              highlight.kind === "raid"
+                                ? "bg-orange-400"
+                                : highlight.kind === "battle"
+                                  ? "bg-zinc-300"
+                                  : "bg-violet-400",
+                            ].join(" ")}
+                          />
+                          <span className="truncate text-zinc-300" title={`${label}: ${detail}`}>
+                            {label} · <span className="text-zinc-500">{detail}</span>
+                          </span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              );
+            })()}
+          </section>
+
           <section className="flex min-h-0 flex-1 flex-col p-3">
             <h2 className="mb-2 text-[11px] uppercase tracking-wider text-zinc-500">Chat</h2>
             <ul className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
@@ -294,7 +357,7 @@ export default function Analyzer() {
 
         <main className="flex min-w-0 flex-1 flex-col">
           <div className="min-h-0 flex-1">
-            <MapCanvas model={model} time={time} replayId={meta.id} />
+            <MapCanvas model={model} time={time} replayId={meta.id} focus={focus} />
           </div>
 
           <div className="border-t border-white/10 px-4 py-3">

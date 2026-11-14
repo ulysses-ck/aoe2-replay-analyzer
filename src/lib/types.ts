@@ -39,6 +39,27 @@ export type ChatMessage = {
   system: boolean;
 };
 
+export type InteractionEvent = {
+  t: number;
+  playerId: number;
+  x: number;
+  y: number;
+  /** Id del objetivo del ataque (unidad o edificio). */
+  targetId: number;
+  count: number;
+};
+
+export type Highlight = {
+  kind: "battle" | "raid" | "apm";
+  t: number;
+  /** Batallas y raids: centro aproximado del choque. */
+  x?: number;
+  y?: number;
+  players: number[];
+  /** Sólo APM: acciones por minuto del pico. */
+  apm?: number;
+};
+
 export type ReplayModel = {
   meta: {
     fileName: string;
@@ -63,6 +84,10 @@ export type ReplayModel = {
    * por eso viven en su propio campo y no en `moves`.
    */
   viewlocks?: Array<[number, number, number]>;
+  /** Ataques ordenados (destino del objetivo). Materia prima de los highlights. */
+  interactions?: InteractionEvent[];
+  /** Batallas, raids y picos de APM detectados sobre las órdenes. */
+  highlights?: Highlight[];
 };
 
 /** Paleta de colores de jugador de AoE2 DE, indexada por `color_id`. */

@@ -103,11 +103,14 @@ export default function MapCanvas({
   model,
   time,
   replayId,
+  focus,
 }: {
   model: ReplayModel;
   time: number;
   /** Id del replay en el cache: viaja en el deep link para poder reabrirlo. */
   replayId?: string;
+  /** Salto a un tile (desde un highlight): re-centra el viewport una vez. */
+  focus?: { x: number; y: number; nonce: number } | null;
 }) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -237,6 +240,18 @@ export default function MapCanvas({
     // Sin esto, un salto con el reloj pausado deja el deep link desactualizado.
     syncUrl(viewRef.current, size);
   }, [follow, time, model.viewlocks, size, mapSize, syncUrl]);
+
+  // Salto a un highlight: centra el tile y suelta el seguimiento (pelearían
+  // por el encuadre). `nonce` hace que re-clickear el mismo salte de nuevo.
+  useEffect(() => {
+    if (!focus || size.w === 0) return;
+    const view = viewRef.current;
+    if (!view) return;
+    setFollow(false);
+    viewRef.current = viewForTile({ x: focus.x, y: focus.y }, view.unit, size, mapSize);
+    setTick((value) => value + 1);
+    syncUrl(viewRef.current, size);
+  }, [focus, size, mapSize, syncUrl]);
 
   const share = useCallback(async () => {
     const view = viewRef.current;
@@ -369,6 +384,22 @@ export default function MapCanvas({
       ctx.beginPath();
       ctx.arc(px(move.x, move.y), py(move.x, move.y), moveR * (1.6 - 0.6 * age), 0, Math.PI * 2);
       ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // Marcadores de batallas/raids cercanos al instante: anillo que pulsa con
+    // el segundo para que el salto desde el sidebar aterrice donde corresponde.
+    for (const highlight of model.highlights ?? []) {
+      if (highlight.x === undefined || highlight.y === undefined) continue;
+      if (Math.abs(highlight.t - time) > 60_000) continue;
+      const age = Math.abs(highlight.t - time) / 60_000;
+      const ring = Math.max(6, unit * 1.2) * (0.7 + 0.3 * Math.sin(time / 700));
+      ctx.globalAlpha = 0.85 - 0.5 * age;
+      ctx.strokeStyle = highlight.kind === "raid" ? "#fb923c" : "#e4e4e7";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(px(highlight.x, highlight.y), py(highlight.x, highlight.y), ring, 0, Math.PI * 2);
+      ctx.stroke();
     }
     ctx.globalAlpha = 1;
 

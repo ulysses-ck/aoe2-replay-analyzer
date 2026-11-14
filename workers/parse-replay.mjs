@@ -20,6 +20,7 @@ import { parseRecording } from "agelens";
 /** Ids de acción de AoE2 DE que usamos. */
 const ACTION_BUILD = 102;
 const ACTION_MOVE = 3;
+const ACTION_INTERACT = 0;
 
 /** Cabecera del registro de acción: player u8, largo u16, y después el payload. */
 const ACTION_PREFIX = 3;
@@ -143,6 +144,7 @@ function parseWithAoe2rec(buffer, fileName) {
   const moves = [];
   const chat = [];
   const viewlocks = [];
+  const interactions = [];
   let clock = 0;
 
   for (const op of ops) {
@@ -179,6 +181,20 @@ function parseWithAoe2rec(buffer, fileName) {
     if (data.Build) {
       const b = decodeBuild(data.Build.data);
       if (b) buildings.push({ t, playerId: Number(data.Build.player_id), ...b });
+    } else if (data.Interact) {
+      const i = data.Interact;
+      const x = Number(i.x);
+      const y = Number(i.y);
+      if (Number.isFinite(x) && Number.isFinite(y)) {
+        interactions.push({
+          t,
+          playerId: Number(i.player_id),
+          x,
+          y,
+          targetId: Number(i.target_id),
+          count: Array.isArray(i.unit_ids) ? i.unit_ids.length : 0,
+        });
+      }
     } else if (data.Move) {
       const m = data.Move;
       const x = Number(m.x);
@@ -209,6 +225,14 @@ function parseWithAoe2rec(buffer, fileName) {
     moves,
     chat,
     viewlocks,
+    interactions,
+    highlights: detectHighlights({
+      players,
+      buildings,
+      moves,
+      interactions,
+      durationMs: Number(summary.duration),
+    }),
   };
 }
 
@@ -233,6 +257,7 @@ function parseWithAgelens(recording, fileName) {
   const moves = [];
   const chat = [];
   const viewlocks = [];
+  const interactions = [];
 
   // `operations` viene en orden de archivo: los Sync traen el incremento de
   // tiempo y las acciones heredan el reloj acumulado.
@@ -274,6 +299,21 @@ function parseWithAgelens(recording, fileName) {
       const y = dv.getFloat32(8, true);
       if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0) continue;
       buildings.push({ t: clock, playerId, x, y, typeId: dv.getUint32(12, true), objectId: 0 });
+    } else if (op.actionId === ACTION_INTERACT) {
+      // target_id u32, x f32, y f32 (relativos al prefijo); las unidades van a
+      // partir del byte 20 del payload y el largo real viene en bytes[1..2].
+      const x = dv.getFloat32(4, true);
+      const y = dv.getFloat32(8, true);
+      const actionLength = bytes[1] | (bytes[2] << 8);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+      interactions.push({
+        t: clock,
+        playerId,
+        x,
+        y,
+        targetId: dv.getUint32(0, true),
+        count: Math.max(0, Math.floor((actionLength - 20) / 4)),
+      });
     } else if (op.actionId === ACTION_MOVE) {
       const x = dv.getFloat32(4, true);
       const y = dv.getFloat32(8, true);
@@ -296,7 +336,122 @@ function parseWithAgelens(recording, fileName) {
     moves,
     chat,
     viewlocks,
+    interactions,
+    highlights: detectHighlights({
+      players,
+      buildings,
+      moves,
+      interactions,
+      durationMs: clock,
+    }),
   };
+}
+
+// ─────────────────────────── detección de highlights ───────────────────────────
+
+/**
+ * Batallas, raids y picos de APM, deducidos de las órdenes del replay.
+ *
+ * No hay estado de combate en el archivo: lo que hay son órdenes. La heurística
+ * es conservadora a propósito — un highlight falso es peor que ninguno:
+ *
+ * - Batalla: dos jugadores de equipos distintos que ordenan ataques a menos de
+ *   14 tiles entre sí dentro de una ventana de 30 s. Los choques vecinos se
+ *   fusionan en un solo highlight (los grupos grandes son un solo evento).
+ * - Raid: lo mismo, pero con edificios enemigos a menos de 12 tiles del choque.
+ * - Pico de APM: el minuto con más acciones de cada jugador, sólo si duplica su
+ *   mediana y pasa las 30 acciones — el "apretó todo" típico de los raids.
+ */
+function detectHighlights({ players, buildings, moves, interactions, durationMs }) {
+  const highlights = [];
+  const teamOf = new Map(players.map((p) => [p.id, p.team ?? 0]));
+  if (teamOf.size > 0 && new Set(teamOf.values()).size > 1) {
+    const WINDOW = 30_000;
+    const RADIUS = 14;
+    const sorted = [...interactions].sort((a, b) => a.t - b.t);
+
+    for (let i = 0; i < sorted.length; i += 1) {
+      const a = sorted[i];
+      const teamA = teamOf.get(a.playerId) ?? 0;
+      if (!teamA) continue;
+
+      for (let j = i + 1; j < sorted.length; j += 1) {
+        const b = sorted[j];
+        if (b.t - a.t > WINDOW) break;
+        const teamB = teamOf.get(b.playerId) ?? 0;
+        if (!teamB || teamB === teamA) continue;
+        if (Math.hypot(a.x - b.x, a.y - b.y) > RADIUS) continue;
+
+        const t = Math.min(a.t, b.t);
+        const x = (a.x + b.x) / 2;
+        const y = (a.y + b.y) / 2;
+
+        // Fusión: un choque cercano en el tiempo es el mismo combate.
+        const near = highlights.find(
+          (h) =>
+            (h.kind === "battle" || h.kind === "raid") &&
+            Math.abs(h.t - t) < WINDOW &&
+            Math.hypot(h.x - x, h.y - y) < RADIUS,
+        );
+        if (near) {
+          near.players = [...new Set([...near.players, a.playerId, b.playerId])];
+          continue;
+        }
+
+        const isRaid = buildings.some((building) => {
+          const buildingTeam = teamOf.get(building.playerId) ?? 0;
+          return (
+            buildingTeam !== 0 &&
+            buildingTeam !== teamA &&
+            Math.hypot(building.x - x, building.y - y) < 12
+          );
+        });
+        highlights.push({
+          kind: isRaid ? "raid" : "battle",
+          t,
+          x,
+          y,
+          players: [...new Set([a.playerId, b.playerId])].sort((m, n) => m - n),
+        });
+      }
+    }
+  }
+
+  // ── picos de APM ──
+  const perMinute = new Map();
+  const bump = (t, playerId) => {
+    if (!perMinute.has(playerId)) perMinute.set(playerId, []);
+    const minute = Math.max(0, Math.floor(t / 60_000));
+    const counts = perMinute.get(playerId);
+    counts[minute] = (counts[minute] ?? 0) + 1;
+  };
+  for (const move of moves) bump(move.t, move.playerId);
+  for (const building of buildings) bump(building.t, building.playerId);
+  for (const interaction of interactions) bump(interaction.t, interaction.playerId);
+
+  for (const [playerId, counts] of perMinute) {
+    const active = counts.filter((value) => value > 0).sort((a, b) => a - b);
+    if (active.length < 4) continue;
+    const median = active[Math.floor(active.length / 2)];
+    let bestMinute = -1;
+    let best = 0;
+    counts.forEach((value, minute) => {
+      if (value >= median * 2 && value >= 30 && value > best) {
+        best = value;
+        bestMinute = minute;
+      }
+    });
+    if (bestMinute >= 0) {
+      highlights.push({ kind: "apm", t: bestMinute * 60_000 + 30_000, playerId, apm: best });
+    }
+  }
+
+  // Sin hora de fin es raro, pero por si el resumen no la trae.
+  const limit = Number.isFinite(durationMs) && durationMs > 0 ? durationMs : Number.MAX_SAFE_INTEGER;
+  return highlights
+    .filter((h) => h.t <= limit)
+    .sort((a, b) => a.t - b.t)
+    .slice(0, 60);
 }
 
 // ─────────────────────────── ejecución ───────────────────────────
