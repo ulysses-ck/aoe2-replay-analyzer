@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import MapCanvas from "./MapCanvas";
 import { BuildOrder, PhaseBreakdown } from "./PhasesPanel";
-import { RaidIcon, BattleIcon, ApmIcon } from "./icons";
+import { RaidIcon, BattleIcon, ApmIcon, FireIcon, RubbleIcon } from "./icons";
 import { formatTime, playerColor, type ReplayModel } from "@/lib/types";
 import { API_BASE } from "@/lib/api-base";
 
@@ -226,7 +226,7 @@ export default function Analyzer() {
       </header>
 
       <div className="flex min-h-0 flex-1">
-        <aside className="flex w-72 shrink-0 flex-col border-r border-white/10">
+        <aside className="flex w-72 shrink-0 flex-col overflow-y-auto border-r border-white/10">
           <section className="border-b border-white/10 p-3">
             <h2 className="mb-2 text-[11px] uppercase tracking-wider text-zinc-500">
               Jugadores
@@ -340,6 +340,59 @@ export default function Analyzer() {
 
           <PhaseBreakdown model={model} />
           <BuildOrder model={model} />
+
+          <section className="border-b border-white/10 p-3">
+            <h2 className="mb-2 text-[11px] uppercase tracking-wider text-zinc-500">
+              Edificios en riesgo
+            </h2>
+            {(() => {
+              const list = model.buildingDamage ?? [];
+              if (list.length === 0) {
+                return <p className="text-xs text-zinc-600">Sin edificios atacados ni demolidos.</p>;
+              }
+              const sorted = [...list].sort((a, b) => b.t - a.t);
+              const nameOf = (id: number) => model.players.find((p) => p.id === id)?.name ?? `P${id}`;
+              return (
+                <ul className="max-h-48 space-y-1 overflow-y-auto pr-1">
+                  {sorted.map((damage, index) => {
+                    const label =
+                      damage.kind === "attacked" ? "Bajo ataque" : "Demolido";
+                    return (
+                      <li key={`${damage.kind}-${damage.objectId}-${index}`}>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTime(damage.t);
+                            setPlaying(false);
+                            setFocus({ x: damage.x, y: damage.y, nonce: Date.now() });
+                          }}
+                          className="flex w-full items-baseline gap-2 rounded px-1 py-0.5 text-left text-xs transition hover:bg-white/5"
+                        >
+                          <span className="font-mono text-[10px] text-zinc-500">
+                            {formatTime(damage.t)}
+                          </span>
+                          <span
+                            aria-hidden
+                            className={damage.kind === "attacked" ? "shrink-0 text-orange-400" : "shrink-0 text-zinc-500"}
+                          >
+                            {damage.kind === "attacked" ? <FireIcon size={12} /> : <RubbleIcon size={12} />}
+                          </span>
+                          <span className="truncate text-zinc-300">
+                            {label} ·{" "}
+                            <span className="text-zinc-500">
+                              {damage.kind === "attacked"
+                                ? `${nameOf(damage.playerId)} → ${nameOf(damage.ownerId)}`
+                                : nameOf(damage.ownerId)}
+                            </span>
+                          </span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              );
+            })()}
+          </section>
 
           <section className="flex min-h-0 flex-1 flex-col p-3">
             <h2 className="mb-2 text-[11px] uppercase tracking-wider text-zinc-500">Chat</h2>

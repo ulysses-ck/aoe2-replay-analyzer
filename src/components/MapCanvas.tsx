@@ -534,8 +534,23 @@ export default function MapCanvas({
 
     // Edificios: ordenados por profundidad isométrica (de atrás hacia adelante).
     // Prisma según huella y altura del edificio + icono vectorial distintivo.
+    // Los demolidos por su dueño desaparecen en el momento del borrado.
+    const deleteAt = new Map<number, number>();
+    const attackedAt = new Map<number, number>();
+    const attackedPos = new Map<number, { x: number; y: number }>();
+    for (const damage of model.buildingDamage ?? []) {
+      if (damage.t > time) continue;
+      if (damage.kind === "deleted" && !deleteAt.has(damage.objectId)) {
+        deleteAt.set(damage.objectId, damage.t);
+      }
+      if (damage.kind === "attacked" && !attackedAt.has(damage.objectId)) {
+        attackedAt.set(damage.objectId, damage.t);
+        attackedPos.set(damage.objectId, { x: damage.x, y: damage.y });
+      }
+    }
+
     const visibleBuildings = allBuildings
-      .filter((b) => b.t <= time)
+      .filter((b) => b.t <= time && (b.objectId === 0 || time < (deleteAt.get(b.objectId) ?? Infinity)))
       .sort((a, b) => a.x + a.y - (b.x + b.y));
 
     for (const b of visibleBuildings) {
@@ -613,6 +628,65 @@ export default function MapCanvas({
         ctx.stroke();
       }
     }
+
+    // Escombros: edificios demolidos por su dueño. El prisma desaparece y
+    // queda una marca gris con una cruz, tamaño según la huella original.
+    for (const [objectId, deleteT] of deleteAt) {
+      const damage = (model.buildingDamage ?? []).find((d) => d.objectId === objectId && d.kind === "deleted");
+      if (!damage || deleteT > time) continue;
+      const info = getBuildingInfo(damage.typeId);
+      const fp = Math.max(2.5, unit * info.footprint * 0.7);
+      const x = px(damage.x, damage.y);
+      const y = py(damage.x, damage.y);
+      const age = Math.min(1, (time - deleteT) / 20000);
+      ctx.globalAlpha = 0.25 + 0.25 * (1 - age);
+      ctx.fillStyle = "#3f3f46";
+      ctx.beginPath();
+      ctx.ellipse(x, y, fp * 0.7, fp * 0.35, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 0.5 + 0.3 * (1 - age);
+      ctx.strokeStyle = "#a1a1aa";
+      ctx.lineWidth = Math.max(1.5, unit * 0.08);
+      const arm = fp * 0.3;
+      ctx.beginPath();
+      ctx.moveTo(x - arm, y - arm);
+      ctx.lineTo(x + arm, y + arm);
+      ctx.moveTo(x + arm, y - arm);
+      ctx.lineTo(x - arm, y + arm);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+
+    // Fuego: edificios enemigos que están recibiendo ataques. Llama que
+    // titila sobre el edificio y un halo naranja para verlo de lejos.
+    for (const [objectId] of attackedAt) {
+      const pos = attackedPos.get(objectId);
+      if (!pos) continue;
+      const info = getBuildingInfo((model.buildingDamage ?? []).find((d) => d.objectId === objectId)?.typeId ?? 0);
+      const fp = Math.max(3, unit * Math.max(info.footprint, 0.9) * 0.6);
+      const x = px(pos.x, pos.y);
+      const y = py(pos.x, pos.y);
+      const flicker = 0.75 + 0.25 * Math.sin(time / 90 + objectId);
+      ctx.globalAlpha = 0.25 * flicker;
+      const halo = fp * (1.4 + 0.15 * Math.sin(time / 300));
+      ctx.fillStyle = "#f97316";
+      ctx.beginPath();
+      ctx.arc(x, y, halo, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 0.95;
+      // Llama: dos lenguas superpuestas, la interna más clara.
+      for (const [scale, color] of [[1, "#f97316"], [0.55, "#fbbf24"]] as const) {
+        const h = fp * 1.6 * scale * flicker;
+        const w = fp * 0.7 * scale;
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.moveTo(x, y - h);
+        ctx.quadraticCurveTo(x + w, y - h * 0.45, x, y);
+        ctx.quadraticCurveTo(x - w, y - h * 0.45, x, y - h);
+        ctx.fill();
+      }
+    }
+    ctx.globalAlpha = 1;
   }, [model, time, size, mapSize, zoomPct, tick, heatmap, terrainCanvas, allBuildings]);
 
   return (

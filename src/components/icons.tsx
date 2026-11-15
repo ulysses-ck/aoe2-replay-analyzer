@@ -132,3 +132,25 @@ export function CastleIcon(props: IconProps) {
     </svg>
   );
 }
+
+/** Fuego: edificio enemigo bajo ataque. */
+export function FireIcon(props: IconProps) {
+  return (
+    <svg {...svgProps(props)}>
+      <path d="M12 2c1 3.5 4 5 4 9a4 4 0 0 1-8 0c0-1.5.5-2.5 1.2-3.6C9.8 9.6 10 11 11 12c.2-2.5-1.5-4.5 1-10Z" />
+      <path d="M8.5 14.5a3.5 3.5 0 1 0 7 0" />
+    </svg>
+  );
+}
+
+/** Escombros: edificio demolido por su dueño. */
+export function RubbleIcon(props: IconProps) {
+  return (
+    <svg {...svgProps(props)}>
+      <path d="M3 21h18" />
+      <path d="M6 21l3-7 4 3 2-4 3 8" />
+      <path d="M9 8l6-3" />
+      <path d="M15 8l-2 2" />
+    </svg>
+  );
+}

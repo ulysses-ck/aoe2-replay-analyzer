@@ -89,6 +89,29 @@ export type ResearchEvent = {
 };
 
 /**
+ * Daño a un edificio. El stream de acciones no registra la destrucción por
+ * combate (es un cambio de estado del juego, no un comando), así que lo que
+ * hay son dos señales indirectas reales:
+ *
+ * - `attacked`: una orden de ataque cuya víctima es el objectId de un edificio
+ *   enemigo (fuego: el edificio está recibiendo golpes).
+ * - `deleted`: el dueño borró el edificio (auto-demolición / replace de casas).
+ *   La posición y el tipo salen del BUILD original con el mismo objectId.
+ */
+export type DamageEvent = {
+  t: number;
+  /** Quien lo golpea; en `deleted` es el dueño que demuele. */
+  playerId: number;
+  /** Dueño del edificio. */
+  ownerId: number;
+  x: number;
+  y: number;
+  typeId: number;
+  objectId: number;
+  kind: "attacked" | "deleted";
+};
+
+/**
  * Grilla de terreno del mapa, una entrada por tile en orden row-major
  * (`índice = y * dimension + x`, verificado contra los edificios).
  */
@@ -134,6 +157,8 @@ export type ReplayModel = {
   production?: ProductionEvent[];
   /** Tecnologías investigadas, en orden de investigación. */
   researches?: ResearchEvent[];
+  /** Edificios atacados por enemigos y demolidos por su dueño. */
+  buildingDamage?: DamageEvent[];
   /** Terreno real del mapa; falta si la cabecera no se pudo leer. */
   terrain?: TerrainModel;
 };

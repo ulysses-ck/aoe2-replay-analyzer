@@ -203,6 +203,9 @@ function parseWithAoe2rec(buffer, fileName) {
   const ageUps = [];
   const production = [];
   const researches = [];
+  const buildingDamage = [];
+  // objectId → edificio (para cruzar ataques y demoliciones con su BUILD).
+  const buildingByOid = new Map();
   let clock = 0;
 
   for (const op of ops) {
@@ -238,7 +241,18 @@ function parseWithAoe2rec(buffer, fileName) {
 
     if (data.Build) {
       const b = decodeBuild(data.Build.data);
-      if (b) buildings.push({ t, playerId: Number(data.Build.player_id), ...b });
+      const buildPlayerId = Number(data.Build.player_id);
+      if (b) {
+        buildings.push({ t, playerId: buildPlayerId, ...b });
+        if (b.objectId > 0) {
+          buildingByOid.set(b.objectId, {
+            x: b.x,
+            y: b.y,
+            typeId: b.typeId,
+            playerId: buildPlayerId,
+          });
+        }
+      }
     } else if (data.Interact) {
       const i = data.Interact;
       const x = Number(i.x);
@@ -252,6 +266,43 @@ function parseWithAoe2rec(buffer, fileName) {
           targetId: Number(i.target_id),
           count: Array.isArray(i.unit_ids) ? i.unit_ids.length : 0,
         });
+        const target = buildingByOid.get(Number(i.target_id));
+        // Fuego: la orden apunta a un edificio que no es del atacante. Si el
+        // objectId no está en el mapa (unidad o edificio previo al parseo) no
+        // hay posición conocida y no lo reportamos.
+        if (target && target.playerId !== Number(i.player_id)) {
+          buildingDamage.push({
+            t,
+            playerId: Number(i.player_id),
+            ownerId: target.playerId,
+            x: target.x,
+            y: target.y,
+            typeId: target.typeId,
+            objectId: Number(i.target_id),
+            kind: "attacked",
+          });
+        }
+      }
+    } else if (data.Delete) {
+      // Auto-demolición: data son u32s con el objectId borrado.
+      const d = bytesOf(data.Delete.data);
+      if (d && d.length % 4 === 0) {
+        const dv = new DataView(d.buffer, d.byteOffset, d.byteLength);
+        for (let i = 0; i + 4 <= d.length; i += 4) {
+          const target = buildingByOid.get(dv.getUint32(i, true));
+          if (target) {
+            buildingDamage.push({
+              t,
+              playerId: target.playerId,
+              ownerId: target.playerId,
+              x: target.x,
+              y: target.y,
+              typeId: target.typeId,
+              objectId: dv.getUint32(i, true),
+              kind: "deleted",
+            });
+          }
+        }
       }
     } else if (data.Move) {
       const m = data.Move;
@@ -311,6 +362,7 @@ function parseWithAoe2rec(buffer, fileName) {
     ageUps,
     production,
     researches,
+    buildingDamage,
     highlights: detectHighlights({
       players,
       buildings,
@@ -346,6 +398,8 @@ function parseWithAgelens(recording, fileName) {
   const ageUps = [];
   const production = [];
   const researches = [];
+  const buildingDamage = [];
+  const buildingByOid = new Map();
 
   // `operations` viene en orden de archivo: los Sync traen el incremento de
   // tiempo y las acciones heredan el reloj acumulado.
@@ -386,7 +440,12 @@ function parseWithAgelens(recording, fileName) {
       const x = dv.getFloat32(4, true);
       const y = dv.getFloat32(8, true);
       if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0) continue;
-      buildings.push({ t: clock, playerId, x, y, typeId: dv.getUint32(12, true), objectId: 0 });
+      const typeId = dv.getUint32(12, true);
+      const objectId = dv.byteLength >= 4 ? dv.getUint32(dv.byteLength - 4, true) : 0;
+      buildings.push({ t: clock, playerId, x, y, typeId, objectId });
+      if (objectId > 0) {
+        buildingByOid.set(objectId, { x, y, typeId, playerId });
+      }
     } else if (op.actionId === ACTION_INTERACT) {
       // target_id u32, x f32, y f32 (relativos al prefijo); las unidades van a
       // partir del byte 20 del payload y el largo real viene en bytes[1..2].
@@ -402,6 +461,36 @@ function parseWithAgelens(recording, fileName) {
         targetId: dv.getUint32(0, true),
         count: Math.max(0, Math.floor((actionLength - 20) / 4)),
       });
+      const target = buildingByOid.get(dv.getUint32(0, true));
+      if (target && target.playerId !== playerId) {
+        buildingDamage.push({
+          t: clock,
+          playerId,
+          ownerId: target.playerId,
+          x: target.x,
+          y: target.y,
+          typeId: target.typeId,
+          objectId: dv.getUint32(0, true),
+          kind: "attacked",
+        });
+      }
+    } else if (op.actionId === 106) {
+      // Auto-demolición: object_id u32 al inicio del payload.
+      if (dv.byteLength >= 4) {
+        const target = buildingByOid.get(dv.getUint32(0, true));
+        if (target) {
+          buildingDamage.push({
+            t: clock,
+            playerId: target.playerId,
+            ownerId: target.playerId,
+            x: target.x,
+            y: target.y,
+            typeId: target.typeId,
+            objectId: dv.getUint32(0, true),
+            kind: "deleted",
+          });
+        }
+      }
     } else if (op.actionId === ACTION_MOVE) {
       const x = dv.getFloat32(4, true);
       const y = dv.getFloat32(8, true);
@@ -447,6 +536,7 @@ function parseWithAgelens(recording, fileName) {
     ageUps,
     production,
     researches,
+    buildingDamage,
     highlights: detectHighlights({
       players,
       buildings,
