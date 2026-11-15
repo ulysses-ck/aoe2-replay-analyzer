@@ -114,6 +114,44 @@ export function getBuildingInfo(typeId: number): BuildingInfo {
 }
 
 /**
+ * Tamaño real del edificio en tiles por lado (AoE2 DE): una casa ocupa 2×2
+ * tiles, el castillo y el centro urbano 4×4, las torres 1×1. Excepciones por
+ * id para los especiales; el resto sale de la categoría.
+ */
+const TILES_BY_ID: Record<number, number> = {
+  487: 4, // Feitoria
+  1889: 2, // Carreta de mulas
+};
+
+const TILES_BY_CATEGORY: Record<BuildingCategory, number> = {
+  town_center: 4,
+  castle: 4,
+  house: 2,
+  mill: 2,
+  farm: 3,
+  lumber_camp: 3,
+  mining_camp: 3,
+  dock: 3,
+  barracks: 3,
+  archery_range: 3,
+  stable: 3,
+  siege_workshop: 3,
+  market: 3,
+  blacksmith: 3,
+  monastery: 3,
+  university: 3,
+  tower: 1,
+  gate: 2,
+  wall: 1,
+  special: 3,
+  other: 2,
+};
+
+export function getBuildingTiles(typeId: number): number {
+  return TILES_BY_ID[typeId] ?? TILES_BY_CATEGORY[getBuildingInfo(typeId).category];
+}
+
+/**
  * Traza un glifo vectorial de alta legibilidad en el contexto Canvas 2D.
  * Se dibuja en dos pasadas (sombra exterior oscura + trazo frontal claro) para
  * garantizar contraste óptimo sobre cualquier color de jugador.

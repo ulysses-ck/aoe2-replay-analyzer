@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { playerColor, type ReplayModel } from "@/lib/types";
-import { getBuildingInfo, drawBuildingIcon, inferStartingTownCenters } from "@/lib/buildings";
+import { getBuildingInfo, getBuildingTiles, drawBuildingIcon, inferStartingTownCenters } from "@/lib/buildings";
 
 type View = {
   /** Centro del viewport en píxeles del canvas. */
@@ -551,17 +551,29 @@ export default function MapCanvas({
 
     const visibleBuildings = allBuildings
       .filter((b) => b.t <= time && (b.objectId === 0 || time < (deleteAt.get(b.objectId) ?? Infinity)))
-      .sort((a, b) => a.x + a.y - (b.x + b.y));
+      .sort(
+        (a, b) =>
+          // Profundidad isométrica por la esquina cercana del bloque de tiles
+          // (x + y + side): dibuja de atrás hacia adelante. A igual profundidad
+          // gana el más alto (su techo ocluye al vecino bajo, como en el juego:
+          // el TC tapa la granja pegada al NE).
+          a.x + a.y + getBuildingTiles(a.typeId) - (b.x + b.y + getBuildingTiles(b.typeId)) ||
+          getBuildingInfo(b.typeId).liftFactor - getBuildingInfo(a.typeId).liftFactor,
+      );
 
     for (const b of visibleBuildings) {
       const color = colorOf(b.playerId);
       const info = getBuildingInfo(b.typeId);
+      // El BUILD reporta el centro de la huella (verificado: las granjas 3×3
+      // llegan con centro en .5, que alinea sus tiles en enteros). El rombo
+      // ocupa side tiles de lado: ancho side*unit, alto side*unit/2.
+      const side = getBuildingTiles(b.typeId);
       const x = px(b.x, b.y);
       const y = py(b.x, b.y);
       const fresh = time - b.t < 2500;
 
-      // Huella y altura específicas del tipo de edificio
-      const fp = Math.max(2.5, unit * info.footprint);
+      // Huella y altura: radio horizontal = side * unit / 2.
+      const fp = Math.max(2.5, (side * unit) / 2);
       const lift = Math.max(1, unit * info.liftFactor);
       const half = fp * 0.5;
 
@@ -635,7 +647,8 @@ export default function MapCanvas({
       const damage = (model.buildingDamage ?? []).find((d) => d.objectId === objectId && d.kind === "deleted");
       if (!damage || deleteT > time) continue;
       const info = getBuildingInfo(damage.typeId);
-      const fp = Math.max(2.5, unit * info.footprint * 0.7);
+      const side = getBuildingTiles(damage.typeId);
+      const fp = Math.max(2.5, (side * unit) / 2);
       const x = px(damage.x, damage.y);
       const y = py(damage.x, damage.y);
       const age = Math.min(1, (time - deleteT) / 20000);
@@ -663,7 +676,8 @@ export default function MapCanvas({
       const pos = attackedPos.get(objectId);
       if (!pos) continue;
       const info = getBuildingInfo((model.buildingDamage ?? []).find((d) => d.objectId === objectId)?.typeId ?? 0);
-      const fp = Math.max(3, unit * Math.max(info.footprint, 0.9) * 0.6);
+      const side = getBuildingTiles((model.buildingDamage ?? []).find((d) => d.objectId === objectId)?.typeId ?? 0);
+      const fp = Math.max(3, (side * unit) / 2);
       const x = px(pos.x, pos.y);
       const y = py(pos.x, pos.y);
       const flicker = 0.75 + 0.25 * Math.sin(time / 90 + objectId);
@@ -741,11 +755,14 @@ export default function MapCanvas({
         <div className="pointer-events-none absolute left-3 top-3 rounded-md bg-black/60 px-2 py-1 font-mono text-[11px] text-zinc-400">
           tile {hover.x}, {hover.y}
           {(() => {
-            // Edificio más cercano al tile sobre el que se pasa el cursor
+            // Edificio bajo el cursor: por ocupación real de tiles (el BUILD
+            // reporta la esquina; el edificio cubre side×side desde ahí).
             const hitBuilding = allBuildings.find(
               (b) =>
                 b.t <= time &&
-                Math.hypot(b.x - hover.x, b.y - hover.y) <= Math.max(1.2, getBuildingInfo(b.typeId).footprint),
+                // Centro de huella: ventana side×side centrada en b.x,b.y.
+                Math.abs(hover.x - b.x) <= getBuildingTiles(b.typeId) / 2 &&
+                Math.abs(hover.y - b.y) <= getBuildingTiles(b.typeId) / 2,
             );
             if (hitBuilding) {
               const bInfo = getBuildingInfo(hitBuilding.typeId);
