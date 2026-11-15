@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import MapCanvas from "./MapCanvas";
+import { BuildOrder, PhaseBreakdown } from "./PhasesPanel";
 import { RaidIcon, BattleIcon, ApmIcon } from "./icons";
 import { formatTime, playerColor, type ReplayModel } from "@/lib/types";
 import { API_BASE } from "@/lib/api-base";
@@ -278,7 +279,7 @@ export default function Analyzer() {
               }
               const nameOf = (id: number) => players.find((p) => p.id === id)?.name ?? `P${id}`;
               return (
-                <ul className="space-y-1">
+                <ul className="max-h-56 space-y-1 overflow-y-auto pr-1">
                   {list.map((highlight, index) => {
                     const label =
                       highlight.kind === "raid"
@@ -336,6 +337,9 @@ export default function Analyzer() {
               );
             })()}
           </section>
+
+          <PhaseBreakdown model={model} />
+          <BuildOrder model={model} />
 
           <section className="flex min-h-0 flex-1 flex-col p-3">
             <h2 className="mb-2 text-[11px] uppercase tracking-wider text-zinc-500">Chat</h2>

@@ -61,6 +61,34 @@ export type Highlight = {
 };
 
 /**
+ * Avance de edad: la investigación de las tecnologías 101/102/103 (Feudal,
+ * Castillo, Imperial). Ojo: el build v101.103.57257 (nov 2026) dejó de
+ * registrarlas — en esos replays la lista viene vacía.
+ */
+export type AgeUp = {
+  playerId: number;
+  /** 101 = Feudal, 102 = Castillo, 103 = Imperial. */
+  age: 101 | 102 | 103;
+  t: number;
+};
+
+/** Unidad que terminó de entrenarse (DeQueue): materia prima del build order. */
+export type ProductionEvent = {
+  t: number;
+  playerId: number;
+  /** Id de unidad de DE (83=villager, 74=militia, 4=archer, …). */
+  unitId: number;
+  amount: number;
+};
+
+/** Tecnología investigada (todas, no sólo las de edad). */
+export type ResearchEvent = {
+  t: number;
+  playerId: number;
+  techId: number;
+};
+
+/**
  * Grilla de terreno del mapa, una entrada por tile en orden row-major
  * (`índice = y * dimension + x`, verificado contra los edificios).
  */
@@ -100,6 +128,12 @@ export type ReplayModel = {
   interactions?: InteractionEvent[];
   /** Batallas, raids y picos de APM detectados sobre las órdenes. */
   highlights?: Highlight[];
+  /** Avances de edad (feudal/castillo/imperial). Vacío si el build no los registra. */
+  ageUps?: AgeUp[];
+  /** Unidades terminadas (DeQueue) por jugador. */
+  production?: ProductionEvent[];
+  /** Tecnologías investigadas, en orden de investigación. */
+  researches?: ResearchEvent[];
   /** Terreno real del mapa; falta si la cabecera no se pudo leer. */
   terrain?: TerrainModel;
 };

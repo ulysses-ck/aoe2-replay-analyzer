@@ -25,6 +25,13 @@ const ACTION_INTERACT = 0;
 /** Cabecera del registro de acción: player u8, largo u16, y después el payload. */
 const ACTION_PREFIX = 3;
 
+/** Ids de acción de AoE2 DE para el análisis de fases y build order. */
+const ACTION_RESEARCH = 101;
+const ACTION_DE_QUEUE = 129;
+
+/** Tecnologías de avance de edad (dataset clásico, confirmado con mgz-fast). */
+const AGE_TECH = { 101: 101, 102: 102, 103: 103 };
+
 function safeJson(text) {
   try {
     return JSON.parse(text);
@@ -193,6 +200,9 @@ function parseWithAoe2rec(buffer, fileName) {
   const chat = [];
   const viewlocks = [];
   const interactions = [];
+  const ageUps = [];
+  const production = [];
+  const researches = [];
   let clock = 0;
 
   for (const op of ops) {
@@ -256,6 +266,27 @@ function parseWithAoe2rec(buffer, fileName) {
           count: Array.isArray(m.unit_ids) ? m.unit_ids.length : 0,
         });
       }
+    } else if (data.Research) {
+      // Avance de edad / investigación: technology_type es el id del dataset
+      // clásico (101 feudal, 102 castillo, 103 imperial). El build 57257
+      // (nov 2026) dejó de mandar esta acción; esos replays quedan sin eras.
+      const r = data.Research;
+      const techId = Number(r.technology_type);
+      const playerId = Number(r.player_id);
+      if (Number.isFinite(techId) && techId > 0 && Number.isFinite(playerId)) {
+        researches.push({ t, playerId, techId });
+        if (AGE_TECH[techId]) ageUps.push({ playerId, age: techId, t });
+      }
+    } else if (data.DeQueue) {
+      // Unidad que terminó de entrenarse (o lote). `unit_id` es del dataset
+      // clásico: 83=villager, 74=militia, 4=archer, 38=explorador, …
+      const q = data.DeQueue;
+      const unitId = Number(q.unit_id);
+      const amount = Number(q.amount);
+      const playerId = Number(q.player_id);
+      if (unitId > 0 && amount > 0 && Number.isFinite(playerId)) {
+        production.push({ t, playerId, unitId, amount });
+      }
     }
   }
 
@@ -277,6 +308,9 @@ function parseWithAoe2rec(buffer, fileName) {
     chat,
     viewlocks,
     interactions,
+    ageUps,
+    production,
+    researches,
     highlights: detectHighlights({
       players,
       buildings,
@@ -309,6 +343,9 @@ function parseWithAgelens(recording, fileName) {
   const chat = [];
   const viewlocks = [];
   const interactions = [];
+  const ageUps = [];
+  const production = [];
+  const researches = [];
 
   // `operations` viene en orden de archivo: los Sync traen el incremento de
   // tiempo y las acciones heredan el reloj acumulado.
@@ -370,6 +407,22 @@ function parseWithAgelens(recording, fileName) {
       const y = dv.getFloat32(8, true);
       if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
       moves.push({ t: clock, playerId, x, y, count: 0 });
+    } else if (op.actionId === ACTION_RESEARCH) {
+      // Layout validado contra mgz-fast (replay 48987, 61 researches idénticos):
+      // building_id u32, selected i16, technology_id i16 (relativos al prefijo).
+      const techId = dv.getInt16(6, true);
+      if (techId > 0) {
+        researches.push({ t: clock, playerId, techId });
+        if (AGE_TECH[techId]) ageUps.push({ playerId, age: techId, t: clock });
+      }
+    } else if (op.actionId === ACTION_DE_QUEUE) {
+      // Layout validado por sondeo: selected i16, 4x, building_type i16,
+      // unit_id i16, amount i16 (relativos al prefijo).
+      const unitId = dv.getInt16(8, true);
+      const amount = dv.getInt16(10, true);
+      if (unitId > 0 && amount > 0) {
+        production.push({ t: clock, playerId, unitId, amount });
+      }
     }
   }
 
@@ -391,6 +444,9 @@ function parseWithAgelens(recording, fileName) {
     chat,
     viewlocks,
     interactions,
+    ageUps,
+    production,
+    researches,
     highlights: detectHighlights({
       players,
       buildings,
