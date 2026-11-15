@@ -154,3 +154,14 @@ export function RubbleIcon(props: IconProps) {
     </svg>
   );
 }
+
+/** Paquete: copia local en el navegador. */
+export function PackIcon(props: IconProps) {
+  return (
+    <svg {...svgProps(props)}>
+      <path d="M21 8l-9-5-9 5v8l9 5 9-5V8Z" />
+      <path d="M3 8l9 5 9-5" />
+      <path d="M12 13v8" />
+    </svg>
+  );
+}

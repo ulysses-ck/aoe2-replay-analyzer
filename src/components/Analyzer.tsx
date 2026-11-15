@@ -6,6 +6,7 @@ import MapCanvas from "./MapCanvas";
 import { BuildOrder, PhaseBreakdown } from "./PhasesPanel";
 import { RaidIcon, BattleIcon, ApmIcon, FireIcon, RubbleIcon } from "./icons";
 import { formatTime, playerColor, type ReplayModel } from "@/lib/types";
+import { getFromCache, saveToCache } from "@/lib/replay-cache";
 import { API_BASE } from "@/lib/api-base";
 
 const SPEEDS = [1, 2, 4, 8, 16, 32];
@@ -15,6 +16,8 @@ export default function Analyzer() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
+  /** true cuando el modelo salió de la cache local porque el backend no respondió. */
+  const [fromCache, setFromCache] = useState(false);
 
   const [time, setTime] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -40,6 +43,8 @@ export default function Analyzer() {
       setModel(payload as ReplayModel);
       setTime(0);
       setPlaying(false);
+      setFromCache(false);
+      void saveToCache(payload as ReplayModel);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
       setModel(null);
@@ -49,6 +54,7 @@ export default function Analyzer() {
   }, []);
 
   // Restaura la partida desde un deep link (?r=<id>), sin volver a subir nada.
+  // Si el backend no responde (PC apagada) cae a la copia local en IndexedDB.
   useEffect(() => {
     const id = new URLSearchParams(window.location.search).get("r");
     if (!id) return;
@@ -60,9 +66,19 @@ export default function Analyzer() {
         if (cancelled) return;
         setModel(payload);
         setFileName(payload.meta.fileName);
+        setFromCache(false);
+        void saveToCache(payload);
       })
-      .catch(() => {
-        if (!cancelled) setError("El replay de este link ya no está disponible. Subilo de nuevo.");
+      .catch(async () => {
+        if (cancelled) return;
+        const cached = await getFromCache(id);
+        if (cached) {
+          setModel(cached);
+          setFileName(cached.meta.fileName);
+          setFromCache(true);
+        } else {
+          setError("El replay de este link no está disponible (¿PC apagada?) y no hay copia local en este navegador.");
+        }
       })
       .finally(() => {
         if (!cancelled) setBusy(false);
@@ -225,6 +241,11 @@ export default function Analyzer() {
         </div>
       </header>
 
+      {fromCache ? (
+        <div className="border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 text-xs text-amber-300">
+          Copia local — el backend no está disponible (¿PC apagada?). Esto es lo que quedaba guardado de la última vez que miraste el replay en este navegador.
+        </div>
+      ) : null}
       <div className="flex min-h-0 flex-1">
         <aside className="flex w-72 shrink-0 flex-col overflow-y-auto border-r border-white/10">
           <section className="border-b border-white/10 p-3">

@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { formatTime, type ReplayModel } from "@/lib/types";
+import { listCache } from "@/lib/replay-cache";
+import { PackIcon } from "@/components/icons";
 import { API_BASE } from "@/lib/api-base";
 
 type ReplayRow = {
@@ -15,6 +17,12 @@ type ReplayRow = {
   createdAt: string;
 };
 
+type CachedRow = {
+  id: string;
+  fileName: string;
+  savedAt: number;
+};
+
 /**
  * Índice de replays parseados: los últimos 200, más nuevos primero. La data
  * viene de la DB del backend (la PC); abrir uno usa el mismo deep link que el
@@ -23,9 +31,14 @@ type ReplayRow = {
 export default function ReplaysIndex() {
   const [rows, setRows] = useState<ReplayRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** Copias locales en el navegador: visibles siempre, útiles con la PC apagada. */
+  const [cached, setCached] = useState<CachedRow[]>([]);
 
   useEffect(() => {
     let cancelled = false;
+    void listCache().then((entries) => {
+      if (!cancelled) setCached(entries);
+    });
     fetch(`${API_BASE}/api/replays`)
       .then((response) =>
         response.ok ? response.json() : Promise.reject(new Error(`HTTP ${response.status}`)),
@@ -54,6 +67,37 @@ export default function ReplaysIndex() {
           ← Reproductor
         </a>
       </header>
+
+      {cached.length > 0 ? (
+        <section className="mb-6">
+          <h2 className="mb-2 text-[11px] uppercase tracking-wider text-zinc-500">
+            Copias locales (visibles sin la PC)
+          </h2>
+          <ul className="divide-y divide-white/5 rounded-lg border border-amber-500/20 bg-amber-500/[0.04]">
+            {cached.map((row) => (
+              <li key={row.id}>
+                <a
+                  href={`/?r=${row.id}`}
+                  className="flex items-center gap-3 px-3 py-2.5 transition hover:bg-white/5"
+                >
+                  <span aria-hidden className="text-amber-400">
+                    <PackIcon size={14} />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm" title={row.fileName}>
+                      {row.fileName}
+                    </p>
+                    <p className="font-mono text-[11px] text-zinc-500">
+                      guardada {new Date(row.savedAt).toLocaleString()}
+                    </p>
+                  </div>
+                  <span className="font-mono text-[11px] text-zinc-600">{row.id}</span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       {error ? (
         <p className="rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">
