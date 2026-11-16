@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import MapCanvas from "./MapCanvas";
 import { BuildOrder, PhaseBreakdown } from "./PhasesPanel";
-import { RaidIcon, BattleIcon, ApmIcon, FireIcon, RubbleIcon } from "./icons";
+import { RaidIcon, BattleIcon, ApmIcon, FireIcon, RubbleIcon, MenuIcon } from "./icons";
 import { formatTime, playerColor, type ReplayModel } from "@/lib/types";
 import { getFromCache, saveToCache } from "@/lib/replay-cache";
 import { API_BASE } from "@/lib/api-base";
@@ -23,6 +23,8 @@ export default function Analyzer() {
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(8);
   const [focus, setFocus] = useState<{ x: number; y: number; nonce: number } | null>(null);
+  /** Sidebar plegable en mobile (en ≥md siempre visible). */
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -139,7 +141,7 @@ export default function Analyzer() {
   if (!model) {
     return (
       <div
-        className="flex h-screen flex-col items-center justify-center gap-6 bg-[#0a0d12] px-6 text-zinc-200"
+        className="flex h-dvh flex-col items-center justify-center gap-6 bg-[#0a0d12] px-6 text-zinc-200"
         onDragOver={(event) => event.preventDefault()}
         onDrop={(event) => {
           event.preventDefault();
@@ -190,7 +192,7 @@ export default function Analyzer() {
 
   return (
     <div
-      className="relative flex h-screen flex-col bg-[#0a0d12] text-zinc-200"
+      className="relative flex h-dvh flex-col bg-[#0a0d12] text-zinc-200"
       onDragOver={(event) => event.preventDefault()}
       onDrop={(event) => {
         event.preventDefault();
@@ -198,20 +200,31 @@ export default function Analyzer() {
         if (file) void upload(file);
       }}
     >
-      <header className="flex items-center justify-between border-b border-white/10 px-4 py-2">
-        <div className="flex items-baseline gap-3">
+      <header className="flex items-center justify-between gap-2 border-b border-white/10 px-3 py-2 md:px-4">
+        <div className="flex min-w-0 items-baseline gap-2 md:gap-3">
+          <button
+            type="button"
+            aria-label="Mostrar paneles"
+            aria-expanded={sidebarOpen}
+            onClick={() => setSidebarOpen((value) => !value)}
+            className="rounded-md border border-white/15 p-1 text-zinc-300 transition hover:bg-white/10 md:hidden"
+          >
+            <MenuIcon size={16} />
+          </button>
           <span className="text-sm font-semibold tracking-tight">MATCH PLAYBACK</span>
-          <span className="font-mono text-[11px] text-zinc-500">{meta.fileName}</span>
+          <span className="min-w-0 truncate font-mono text-[11px] text-zinc-500">
+            {meta.fileName}
+          </span>
         </div>
-        <div className="flex items-center gap-4 font-mono text-[11px] text-zinc-400">
-          {meta.build > 0 ? <span>build {meta.build}</span> : null}
-          <span>
+        <div className="flex shrink-0 items-center gap-2 font-mono text-[11px] text-zinc-400 md:gap-4">
+          {meta.build > 0 ? <span className="hidden lg:inline">build {meta.build}</span> : null}
+          <span className="hidden sm:inline">
             mapa {meta.mapSize}×{meta.mapSize}
           </span>
-          <span>{meta.playerCount} jugadores</span>
+          <span className="hidden sm:inline">{meta.playerCount} jugadores</span>
           <span>{formatTime(meta.durationMs)}</span>
           {meta.engine === "agelens" ? (
-            <span className="rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-amber-300">
+            <span className="hidden rounded border border-amber-500/30 bg-amber-500/10 px-1.5 py-0.5 text-amber-300 md:inline">
               parser alternativo
             </span>
           ) : null}
@@ -246,8 +259,15 @@ export default function Analyzer() {
           Copia local — el backend no está disponible (¿PC apagada?). Esto es lo que quedaba guardado de la última vez que miraste el replay en este navegador.
         </div>
       ) : null}
-      <div className="flex min-h-0 flex-1">
-        <aside className="flex w-72 shrink-0 flex-col overflow-y-auto border-r border-white/10">
+      <div className="relative flex min-h-0 flex-1">
+        {/* En mobile la sidebar es un drawer sobre el mapa; en ≥md queda fija. */}
+        <aside
+          className={[
+            "absolute inset-y-0 left-0 z-30 flex w-72 flex-col overflow-y-auto border-r border-white/10 bg-[#0a0d12]/95 backdrop-blur-sm",
+            sidebarOpen ? "flex" : "hidden",
+            "md:static md:z-auto md:flex md:bg-transparent md:backdrop-blur-none",
+          ].join(" ")}
+        >
           <section className="border-b border-white/10 p-3">
             <h2 className="mb-2 text-[11px] uppercase tracking-wider text-zinc-500">
               Jugadores
@@ -385,6 +405,7 @@ export default function Analyzer() {
                           onClick={() => {
                             setTime(damage.t);
                             setPlaying(false);
+                            setSidebarOpen(false);
                             setFocus({ x: damage.x, y: damage.y, nonce: Date.now() });
                           }}
                           className="flex w-full items-baseline gap-2 rounded px-1 py-0.5 text-left text-xs transition hover:bg-white/5"
@@ -525,7 +546,7 @@ export default function Analyzer() {
               className="w-full accent-violet-500"
             />
 
-            <div className="mt-2 flex items-center gap-3">
+            <div className="mt-2 flex flex-wrap items-center gap-2 sm:gap-3">
               <button
                 type="button"
                 onClick={() => setPlaying((value) => !value)}
@@ -561,7 +582,7 @@ export default function Analyzer() {
                 ))}
               </select>
 
-              <span className="ml-auto font-mono text-[10px] text-zinc-600">
+              <span className="hidden font-mono text-[10px] text-zinc-600 sm:inline">
                 {meta.parseMs ? `parse ${meta.parseMs} ms` : null}
                 {meta.bytes ? ` · ${(meta.bytes / 1048576).toFixed(1)} MB` : null}
               </span>

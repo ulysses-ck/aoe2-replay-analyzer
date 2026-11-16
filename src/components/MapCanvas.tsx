@@ -215,6 +215,10 @@ export default function MapCanvas({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const viewRef = useRef<View | null>(null);
   const dragging = useRef<{ x: number; y: number } | null>(null);
+  /** Punteros activos (táctiles): key = pointerId. Con ≥2 entra el pinch. */
+  const pointers = useRef(new Map<number, { x: number; y: number }>());
+  /** Estado del pinch: distancia y punto medio de los 2 dedos. */
+  const pinch = useRef<{ dist: number; mx: number; my: number } | null>(null);
   const appliedInitial = useRef(false);
   const urlTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -703,13 +707,54 @@ export default function MapCanvas({
     ctx.globalAlpha = 1;
   }, [model, time, size, mapSize, zoomPct, tick, heatmap, terrainCanvas, allBuildings]);
 
+  // Pinch-zoom táctil: 2 dedos escalan alrededor de su punto medio (además
+  // siguen pan-eando con el desplazamiento del medio). Mismo encuadre que el
+  // zoom de rueda: el punto bajo los dedos no se mueve.
+  const applyPinch = useCallback(
+    (event: React.PointerEvent<HTMLCanvasElement>) => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const view = viewRef.current;
+      const a = [...pointers.current.values()];
+      if (!view || a.length < 2 || size.w === 0) return;
+      const dist = Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y);
+      const mx = (a[0].x + a[1].x) / 2;
+      const my = (a[0].y + a[1].y) / 2;
+      const rect = canvas.getBoundingClientRect();
+      const px = mx - rect.left;
+      const py = my - rect.top;
+      const prev = pinch.current;
+      if (prev && prev.dist > 0 && dist > 0) {
+        // Zoom alrededor del punto medio previo y pan con el movimiento del medio.
+        const factor = dist / prev.dist;
+        const nextUnit = clampUnit(view.unit * factor, size);
+        const ratio = nextUnit / view.unit;
+        viewRef.current = {
+          cx: px - (px - view.cx) * ratio + (mx - prev.mx),
+          cy: py - (py - view.cy) * ratio + (my - prev.my),
+          unit: nextUnit,
+        };
+        setZoomPct(Math.round((nextUnit / fitUnit(size, mapSize)) * 100));
+        setTick((t) => t + 1);
+      }
+      pinch.current = { dist, mx, my };
+      event.preventDefault();
+    },
+    [size, mapSize, clampUnit],
+  );
+
   return (
     <div ref={wrapRef} className="relative h-full w-full overflow-hidden">
       <canvas
         ref={canvasRef}
         className="block h-full w-full cursor-grab touch-none active:cursor-grabbing"
         onPointerDown={(event) => {
+          pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
           dragging.current = { x: event.clientX, y: event.clientY };
+          if (pointers.current.size >= 2) {
+            dragging.current = null; // con 2 dedos el pan lo maneja el pinch
+            applyPinch(event);
+          }
           // Si el usuario agarra el mapa, deja de seguir la cámara del dueño.
           setFollow(false);
           event.currentTarget.setPointerCapture(event.pointerId);
@@ -719,6 +764,14 @@ export default function MapCanvas({
           const rect = canvas.getBoundingClientRect();
           const view = viewRef.current;
           if (!view) return;
+
+          if (pointers.current.has(event.pointerId)) {
+            pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+          }
+          if (pointers.current.size >= 2) {
+            applyPinch(event);
+            return;
+          }
 
           // Coordenada de tile bajo el cursor (proyección inversa).
           const mx = event.clientX - rect.left;
@@ -739,10 +792,17 @@ export default function MapCanvas({
           setTick((t) => t + 1);
         }}
         onPointerLeave={() => setHover(null)}
-        onPointerUp={() => {
+        onPointerUp={(event) => {
+          pointers.current.delete(event.pointerId);
+          if (pointers.current.size < 2) pinch.current = null;
           dragging.current = null;
           const view = viewRef.current;
           if (view && size.w > 0) syncUrl(view, size);
+        }}
+        onPointerCancel={(event) => {
+          pointers.current.delete(event.pointerId);
+          if (pointers.current.size < 2) pinch.current = null;
+          dragging.current = null;
         }}
         onDoubleClick={reset}
       />
