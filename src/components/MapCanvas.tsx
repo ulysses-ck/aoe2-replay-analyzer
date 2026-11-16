@@ -352,10 +352,15 @@ export default function MapCanvas({
 
   // Salto a un highlight: centra el tile y suelta el seguimiento (pelearían
   // por el encuadre). `nonce` hace que re-clickear el mismo salte de nuevo.
+  // Se aplica UNA vez por nonce: el efecto depende de syncUrl (que cambia con
+  // cada tick del reloj) y, sin ese filtro, machacaba el paneo del usuario.
+  const appliedFocus = useRef<number | null>(null);
   useEffect(() => {
     if (!focus || size.w === 0) return;
+    if (appliedFocus.current === focus.nonce) return;
     const view = viewRef.current;
     if (!view) return;
+    appliedFocus.current = focus.nonce;
     setFollow(false);
     viewRef.current = viewForTile({ x: focus.x, y: focus.y }, view.unit, size, mapSize);
     setTick((value) => value + 1);
