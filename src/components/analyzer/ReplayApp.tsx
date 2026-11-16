@@ -18,7 +18,7 @@ export default function ReplayApp() {
   const isDragging = useFileDrop(loader.upload);
 
   return (
-    <div className="flex min-h-dvh flex-col bg-[#0a0d12] text-zinc-200">
+    <div className="flex h-dvh flex-col overflow-hidden bg-[#0a0d12] text-zinc-200">
       <input {...inputProps} />
       {loader.model ? (
         <>

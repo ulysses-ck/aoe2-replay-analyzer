@@ -47,7 +47,7 @@ export function Sidebar({ model, time, lookup, onSeek, open }: Props) {
       <HighlightsPanel highlights={model.highlights ?? NO_HIGHLIGHTS} nameOf={lookup.nameOf} onSeek={onSeek} />
       <StaticPhasePanels model={model} />
       <DamagePanel damage={model.buildingDamage ?? NO_DAMAGE} nameOf={lookup.nameOf} onSeek={onSeek} />
-      <ChatPanel chat={model.chat} nameOf={lookup.nameOf} colorOf={lookup.colorOf} onSeek={onSeek} />
+      <ChatPanel chat={model.chat} time={time} nameOf={lookup.nameOf} colorOf={lookup.colorOf} onSeek={onSeek} />
     </aside>
   );
 }
