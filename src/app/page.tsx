@@ -1,5 +1,5 @@
-import Analyzer from "@/components/Analyzer";
+import ReplayApp from "@/components/analyzer/ReplayApp";
 
 export default function Home() {
-  return <Analyzer />;
+  return <ReplayApp />;
 }
