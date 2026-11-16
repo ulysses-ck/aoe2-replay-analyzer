@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { playerColor, type ReplayModel } from "@/lib/types";
+import { playerColor, type ReplayModel, type BuildingEvent } from "@/lib/types";
 import { getBuildingInfo, getBuildingTiles, drawBuildingIcon, inferStartingTownCenters } from "@/lib/buildings";
+import { SpriteSet } from "@/lib/sprites";
 
 type View = {
   /** Centro del viewport en píxeles del canvas. */
@@ -229,6 +230,8 @@ export default function MapCanvas({
   const [copied, setCopied] = useState(false);
   const [follow, setFollow] = useState(false);
   const [heatmap, setHeatmap] = useState(false);
+  /** Sprites reales del juego (atlas WebP del backend); null = todavía cargando. */
+  const spritesRef = useRef<SpriteSet | null>(null);
 
   const mapSize = model.meta.mapSize || 200;
   const terrainCanvas = useMemo(() => (model.terrain ? buildTerrainCanvas(model.terrain) : null), [model.terrain]);
@@ -390,6 +393,31 @@ export default function MapCanvas({
     }
   }, [mapSize, size, time, replayId]);
 
+  // Sprites del juego: manifiesto + las civilizaciones de la partida. Cada
+  // página o civ que llega dispara un re-dibujo vía onLoad; hasta entonces
+  // (o si el backend no los tiene) se dibujan los prismas de siempre.
+  useEffect(() => {
+    let cancelled = false;
+    // Páginas a media resolución en pantallas chicas: la mitad de memoria
+    // decodificada (una página completa son ~67 MB de RAM).
+    const lowRes = window.matchMedia("(max-width: 767px)").matches;
+    SpriteSet.load(lowRes)
+      .then(async (sprites) => {
+        if (cancelled) return;
+        spritesRef.current = sprites;
+        sprites.onLoad = () => setTick((value) => value + 1);
+        setTick((value) => value + 1);
+        await sprites.loadCivs(model.players.map((p) => p.civId));
+        if (!cancelled) setTick((value) => value + 1);
+      })
+      .catch(() => {
+        // Sin manifiesto (backend caído, red corta): prismas de siempre.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [model]);
+
   // Render.
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -415,6 +443,66 @@ export default function MapCanvas({
     // Proyección isométrica 2:1 (la misma del juego).
     const px = (x: number, y: number) => cx + (x + y - N) * unit;
     const py = (x: number, y: number) => cy + (y - x) * unit * 0.5;
+
+    // ── Sprites reales del juego ─────────────────────────────────────────
+    // Sólo con suficiente zoom (a vista general los prismas rinden mejor y no
+    // compiten con el terreno). k = px de pantalla por px de sprite: un tile
+    // del arte mide 64.5 px de sprite (86 × 0.75) y 2·unit de pantalla.
+    const sprites = spritesRef.current;
+    const SPRITE_UNIT = 5;
+    const spriteK = sprites ? (2 * unit) / sprites.tilePx : 0;
+    const civByPlayer = new Map(model.players.map((p) => [p.id, p.civId]));
+    const ageOf = (playerId: number) => {
+      let age = 1;
+      for (const up of model.ageUps ?? []) if (up.playerId === playerId && up.t <= time) age += 1;
+      return age;
+    };
+
+    /**
+     * Dibuja el edificio con el sprite real por civilización y edad (con los
+     * anexos del TC y las máscaras de color teñidas). Devuelve false si no hay
+     * sprite para este tipo (→ prisma), true si lo dibujó o su página de atlas
+     * todavía está bajando (en ese caso no se dibuja NADA para no hacerlo
+     * reventar: el re-dibujo llega con sprites.onLoad).
+     */
+    const drawBuildingSprite = (b: BuildingEvent): boolean => {
+      if (!sprites || spriteK <= 0) return false;
+      const civ = civByPlayer.get(b.playerId);
+      if (civ == null) return false;
+      const parts = sprites.building(civ, b.typeId, ageOf(b.playerId));
+      if (!parts) return false;
+      // Murallas: un key por forma según vecinos; v1 usa el tramo recto.
+      const keyOf = (key: number | number[]) => (Array.isArray(key) ? key[0] : key);
+      for (const part of parts) {
+        if (part[0] != null && sprites.frame(keyOf(part[0])) == null) return true;
+      }
+      const color = colorOf(b.playerId);
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+      ctx.globalAlpha = 1;
+      for (const [key, dx = 0, dy = 0, ox = 0, oy = 0] of parts) {
+        if (key == null) continue;
+        const frame = sprites.frame(keyOf(key));
+        if (!frame) continue;
+        // Los offsets de anexos (TC) están en el eje del juego: entran
+        // rotados como (dy, -dx), igual que en el visor de referencia.
+        const sx = px(b.x + dy, b.y - dx);
+        const sy = py(b.x + dy, b.y - dx);
+        const x = sx + (ox - frame.ax) * spriteK;
+        const y = sy + (oy - frame.ay) * spriteK;
+        const w = frame.w * spriteK;
+        const h = frame.h * spriteK;
+        ctx.drawImage(frame.image, frame.sx, frame.sy, frame.sw, frame.sh, x, y, w, h);
+        if (frame.mask) {
+          const tint = sprites.tint(frame, keyOf(key), color);
+          if (tint) ctx.drawImage(tint, x, y, w, h);
+        }
+      }
+      ctx.globalAlpha = 1;
+      ctx.imageSmoothingEnabled = false;
+      return true;
+    };
+
 
     // Rombo del mapa: con terreno real se dibuja el canvas offscreen completo
     // bajo una transform isométrica (screen = unit·(u+v) + offset en X,
@@ -571,6 +659,9 @@ export default function MapCanvas({
       );
 
     for (const b of visibleBuildings) {
+      // Sprite real del juego por civilización/edad; sin sprite (tipo sin arte,
+      // página bajando, backend caído) cae al prisma + icono de siempre.
+      if (drawBuildingSprite(b)) continue;
       const color = colorOf(b.playerId);
       const info = getBuildingInfo(b.typeId);
       // El BUILD reporta el centro de la huella (verificado: las granjas 3×3
@@ -581,9 +672,13 @@ export default function MapCanvas({
       const y = py(b.x, b.y);
       const fresh = time - b.t < 2500;
 
-      // Huella y altura: radio horizontal = side * unit / 2.
-      const fp = Math.max(2.5, (side * unit) / 2);
-      const lift = Math.max(1, unit * info.liftFactor);
+      // Huella y altura: radio horizontal = side * unit (un tile mide 2·unit
+      // de ancho en la proyección isométrica: el diamante de side tiles es
+      // side·2·unit de ancho y side·unit de alto).
+      const fp = Math.max(2.5, side * unit);
+      const isFarm = info.category === "farm";
+      // Las granjas son terreno plano: sin levante vertical.
+      const lift = isFarm ? 0 : Math.max(1, unit * info.liftFactor);
       const half = fp * 0.5;
 
       // Puntos del rombo de base.
@@ -622,17 +717,40 @@ export default function MapCanvas({
       ctx.lineTo(bottom.x, bottom.y - lift);
       ctx.lineTo(left.x, left.y - lift);
       ctx.closePath();
-      ctx.fillStyle = info.category === "farm" ? shade(color, 0.75) : shade(color, 1.05);
-      ctx.fill();
+      // Granja: parcela de tierra arada plana con borde del color del jugador,
+      // como en el juego (el prisma del color del jugador desentonaba con los
+      // edificios con sprite real).
+      if (isFarm) {
+        ctx.fillStyle = time - b.t < 2500 ? "#8a6a3c" : "#9c7a3c";
+        ctx.fill();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = Math.max(1, unit / 16);
+        ctx.stroke();
+        ctx.strokeStyle = "rgba(60,40,20,0.35)";
+        ctx.lineWidth = 1;
+        for (let i = 1; i < 4; i++) {
+          const k2 = i / 4;
+          const a1 = { x: top.x + (left.x - top.x) * k2, y: top.y + (left.y - top.y) * k2 };
+          const a2 = { x: right.x + (bottom.x - right.x) * k2, y: right.y + (bottom.y - right.y) * k2 };
+          ctx.beginPath();
+          ctx.moveTo(a1.x, a1.y);
+          ctx.lineTo(a2.x, a2.y);
+          ctx.stroke();
+        }
+      } else {
+        ctx.fillStyle = shade(color, 1.05);
+        ctx.fill();
+      }
 
-      if (unit > 5) {
+      if (unit > 5 && !isFarm) {
         ctx.strokeStyle = "rgba(0, 0, 0, 0.55)";
         ctx.lineWidth = 1;
         ctx.stroke();
       }
 
       // Glifo o icono vectorial representativo según el tipo de edificio
-      if (unit >= 4.5) {
+      // (no para granjas: la parcela ya se lee como granja).
+      if (unit >= 4.5 && !isFarm) {
         const iconSize = Math.min(fp * 0.65, Math.max(4.5, unit * 0.7));
         drawBuildingIcon(ctx, info.category, x, y - lift, iconSize);
       }
@@ -657,7 +775,7 @@ export default function MapCanvas({
       if (!damage || deleteT > time) continue;
       const info = getBuildingInfo(damage.typeId);
       const side = getBuildingTiles(damage.typeId);
-      const fp = Math.max(2.5, (side * unit) / 2);
+      const fp = Math.max(2.5, side * unit);
       const x = px(damage.x, damage.y);
       const y = py(damage.x, damage.y);
       const age = Math.min(1, (time - deleteT) / 20000);
@@ -686,7 +804,7 @@ export default function MapCanvas({
       if (!pos) continue;
       const info = getBuildingInfo((model.buildingDamage ?? []).find((d) => d.objectId === objectId)?.typeId ?? 0);
       const side = getBuildingTiles((model.buildingDamage ?? []).find((d) => d.objectId === objectId)?.typeId ?? 0);
-      const fp = Math.max(3, (side * unit) / 2);
+      const fp = Math.max(3, side * unit);
       const x = px(pos.x, pos.y);
       const y = py(pos.x, pos.y);
       const flicker = 0.75 + 0.25 * Math.sin(time / 90 + objectId);
@@ -710,6 +828,10 @@ export default function MapCanvas({
       }
     }
     ctx.globalAlpha = 1;
+
+    // Presupuesto de memoria de atlas: libera páginas que hace rato no se
+    // dibujan (LRU) cuando el total decodificado pasa el tope.
+    sprites?.endFrame();
   }, [model, time, size, mapSize, zoomPct, tick, heatmap, terrainCanvas, allBuildings]);
 
   // Pinch-zoom táctil: 2 dedos escalan alrededor de su punto medio (además
