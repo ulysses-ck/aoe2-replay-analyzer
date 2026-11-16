@@ -47,3 +47,9 @@ next-env.d.ts
 # cache de replays parseados (deep links)
 /.cache/
 .ai-memory-wiki
+
+# sprites del juego (180 MB, 5372 archivos): los genera tools/sprites de
+# sk8erlucas/aoe2-replays contra la instalacion local del juego; NO se
+# commitean (los sirve el backend en produccion). Copiarlos a esta repo
+# desde /tmp/opencode/sprites-out con tar cuando se regeneren.
+public/sprites/
