@@ -22,6 +22,13 @@ const IDLE_FRAMES = 30;
 /** Parte de un edificio: [frameKey, dx?, dy?, ox?, oy?]. */
 export type SpritePart = [number | number[], number | undefined, number | undefined, number | undefined, number | undefined];
 
+/** Animaciones de una unidad, en frames del atlas. idle: 16 direcciones; walk/attack: 16×frames. */
+export type UnitAnim = {
+  idle: number[];
+  walk: number[][];
+  attack?: number[][];
+};
+
 type Manifest = {
   version: number;
   scale: number;
@@ -191,6 +198,21 @@ export class SpriteSet {
     const ages = this.civ(civId)?.buildings?.[String(id)];
     if (!ages) return null;
     for (let a = age; a >= 1; a--) if (ages[String(a)]) return ages[String(a)];
+    return null;
+  }
+
+  /**
+   * Animaciones de una unidad (idle: 16 direcciones; walk/attack: 16×frames).
+   * Sin arte para el tipo pedido cae al aldeano de la civ (83 varón, 293
+   * mujer): las rutas estimadas no saben el tipo real de la unidad.
+   */
+  unit(civId: number, typeId: number): UnitAnim | null {
+    const units = this.civ(civId)?.units;
+    if (!units) return null;
+    for (const key of [String(typeId), "83", "293"]) {
+      const raw = units[key] as UnitAnim | undefined;
+      if (raw && Array.isArray(raw.idle) && Array.isArray(raw.walk)) return raw;
+    }
     return null;
   }
 

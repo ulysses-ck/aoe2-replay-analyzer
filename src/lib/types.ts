@@ -29,6 +29,13 @@ export type MoveEvent = {
   x: number;
   y: number;
   count: number;
+  /**
+   * Ids de las unidades seleccionadas (aoe2rec-js los trae; el fallback
+   * agelens no). Con ellos se encadenan rutas por unidad: cada vez que una id
+   * reaparece en otra orden, su posición anterior era el destino de la orden
+   * previa (ver src/lib/units.ts).
+   */
+  ids?: number[];
 };
 
 export type ChatMessage = {
@@ -47,6 +54,8 @@ export type InteractionEvent = {
   /** Id del objetivo del ataque (unidad o edificio). */
   targetId: number;
   count: number;
+  /** Ids de las unidades seleccionadas (mismo criterio que en `moves`). */
+  ids?: number[];
 };
 
 export type Highlight = {

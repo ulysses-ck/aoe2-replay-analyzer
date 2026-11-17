@@ -258,6 +258,9 @@ function parseWithAoe2rec(buffer, fileName) {
       const x = Number(i.x);
       const y = Number(i.y);
       if (Number.isFinite(x) && Number.isFinite(y)) {
+        // Ids de las unidades seleccionadas: aoe2rec-js los trae listos. Se
+        // guardan (capado) porque permiten encadenar rutas por unidad.
+        const ids = Array.isArray(i.unit_ids) ? i.unit_ids.map(Number).slice(0, 64) : undefined;
         interactions.push({
           t,
           playerId: Number(i.player_id),
@@ -265,6 +268,7 @@ function parseWithAoe2rec(buffer, fileName) {
           y,
           targetId: Number(i.target_id),
           count: Array.isArray(i.unit_ids) ? i.unit_ids.length : 0,
+          ids,
         });
         const target = buildingByOid.get(Number(i.target_id));
         // Fuego: la orden apunta a un edificio que no es del atacante. Si el
@@ -309,12 +313,14 @@ function parseWithAoe2rec(buffer, fileName) {
       const x = Number(m.x);
       const y = Number(m.y);
       if (Number.isFinite(x) && Number.isFinite(y)) {
+        const ids = Array.isArray(m.unit_ids) ? m.unit_ids.map(Number).slice(0, 64) : undefined;
         moves.push({
           t,
           playerId: Number(m.player_id),
           x,
           y,
           count: Array.isArray(m.unit_ids) ? m.unit_ids.length : 0,
+          ids,
         });
       }
     } else if (data.Research) {

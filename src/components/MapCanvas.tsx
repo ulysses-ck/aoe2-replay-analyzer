@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { playerColor, type ReplayModel, type BuildingEvent } from "@/lib/types";
 import { getBuildingInfo, getBuildingTiles, drawBuildingIcon, inferStartingTownCenters } from "@/lib/buildings";
+import { animFrame, buildUnitPaths, unitSnapshotAt, type UnitPath } from "@/lib/units";
 import { SpriteSet } from "@/lib/sprites";
 
 type View = {
@@ -240,6 +241,10 @@ export default function MapCanvas({
     if (inferred.length === 0) return model.buildings;
     return [...inferred, ...model.buildings];
   }, [model]);
+
+  // Rutas estimadas de las unidades (encadenadas por id de las órdenes).
+  // Un Map por id; el dibujo por frame las interpola y ordena por profundidad.
+  const unitPaths = useMemo(() => buildUnitPaths(model), [model]);
 
   const clampUnit = useCallback(
     (unit: number, s: Size) => {
@@ -663,10 +668,10 @@ export default function MapCanvas({
           getBuildingInfo(a.typeId).liftFactor - getBuildingInfo(b.typeId).liftFactor,
       );
 
-    for (const b of visibleBuildings) {
-      // Sprite real del juego por civilización/edad; sin sprite (tipo sin arte,
-      // página bajando, backend caído) cae al prisma + icono de siempre.
-      if (drawBuildingSprite(b)) continue;
+    // Prisma + icono vectorial (cae acá cuando no hay sprite real, o su página
+    // de atlas todavía está bajando).
+    const drawBuildingPrism = (b: BuildingEvent) => {
+      if (drawBuildingSprite(b)) return;
       const color = colorOf(b.playerId);
       const info = getBuildingInfo(b.typeId);
       // El BUILD reporta el centro de la huella (verificado: las granjas 3×3
@@ -771,7 +776,74 @@ export default function MapCanvas({
         ctx.closePath();
         ctx.stroke();
       }
+    };
+
+    // Capas del pintor isométrico: edificios y unidades en una sola lista
+    // ordenada por profundidad (y − x) — las unidades tienen que quedar
+    // intercaladas entre los edificios, no encima de todo.
+    type Layer = { d: number; draw: () => void };
+    const layers: Layer[] = [];
+    for (const b of visibleBuildings) {
+      layers.push({
+        d: b.y - b.x + getBuildingTiles(b.typeId) / 2 + getBuildingInfo(b.typeId).liftFactor * 1e-4,
+        draw: () => drawBuildingPrism(b),
+      });
     }
+
+    // Unidades con ruta estimada. Sprites reales (aldeano o milicia según
+    // hacia quién pega) con la misma mecánica que los edificios: si la página
+    // del atlas todavía baja, punto del color y re-dibujo via onLoad. Con poco
+    // zoom no se dibujan: a vista general son ruido.
+    if (sprites && spriteK > 0 && unit >= SPRITE_UNIT) {
+      const drawUnitAt = (u: UnitPath, snap: { x: number; y: number; moving: boolean; dx: number; dy: number }) => {
+        const color = colorOf(u.playerId);
+        const civ = civByPlayer.get(u.playerId);
+        const anim = civ != null ? sprites.unit(civ, u.military ? 74 : 83) : null;
+        if (anim) {
+          // Dirección del sprite: pantalla dx ∝ Δx+Δy y dy ∝ (Δy−Δx)/2 (la
+          // misma transformada que hace el visor de referencia sobre sus
+          // coordenadas rotadas). 0 = mirando a la derecha, sentido horario.
+          const count = anim.walk.length;
+          const angle = Math.atan2((snap.dy - snap.dx) / 2, snap.dx + snap.dy);
+          const idx = ((Math.round((angle / (2 * Math.PI)) * count) % count) + count) % count;
+          const key = snap.moving ? anim.walk[idx]?.[animFrame(anim.walk[idx]?.length ?? 0, time, 340)] : anim.idle[idx];
+          const frame = key != null ? sprites.frame(key) : null;
+          if (frame) {
+            const sx = px(snap.x, snap.y);
+            const sy = py(snap.x, snap.y);
+            const x = sx - frame.ax * spriteK;
+            const y = sy - frame.ay * spriteK;
+            ctx.imageSmoothingEnabled = true;
+            ctx.imageSmoothingQuality = "high";
+            ctx.drawImage(frame.image, frame.sx, frame.sy, frame.sw, frame.sh, x, y, frame.w * spriteK, frame.h * spriteK);
+            if (frame.mask) {
+              const tint = sprites.tint(frame, key, color);
+              if (tint) ctx.drawImage(tint, x, y, frame.w * spriteK, frame.h * spriteK);
+            }
+            ctx.imageSmoothingEnabled = false;
+            return;
+          }
+        }
+        // Fallback: punto del color del jugador (civ sin arte o atlas en vuelo).
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(px(snap.x, snap.y), py(snap.x, snap.y), Math.max(2, unit * 0.22), 0, Math.PI * 2);
+        ctx.fill();
+      };
+
+      const margin = 80;
+      for (const u of unitPaths.values()) {
+        const snap = unitSnapshotAt(u, time);
+        if (!snap) continue;
+        const sx = px(snap.x, snap.y);
+        const sy = py(snap.x, snap.y);
+        if (sx < -margin || sx > size.w + margin || sy < -margin || sy > size.h + margin) continue;
+        layers.push({ d: snap.y - snap.x, draw: () => drawUnitAt(u, snap) });
+      }
+    }
+
+    layers.sort((a, b) => a.d - b.d);
+    for (const layer of layers) layer.draw();
 
     // Escombros: edificios demolidos por su dueño. El prisma desaparece y
     // queda una marca gris con una cruz, tamaño según la huella original.
@@ -837,7 +909,7 @@ export default function MapCanvas({
     // Presupuesto de memoria de atlas: libera páginas que hace rato no se
     // dibujan (LRU) cuando el total decodificado pasa el tope.
     sprites?.endFrame();
-  }, [model, time, size, mapSize, zoomPct, tick, heatmap, terrainCanvas, allBuildings]);
+  }, [model, time, size, mapSize, zoomPct, tick, heatmap, terrainCanvas, allBuildings, unitPaths]);
 
   // Pinch-zoom táctil: 2 dedos escalan alrededor de su punto medio (además
   // siguen pan-eando con el desplazamiento del medio). Mismo encuadre que el
