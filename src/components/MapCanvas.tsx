@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { playerColor, type ReplayModel, type BuildingEvent } from "@/lib/types";
 import { getBuildingInfo, getBuildingTiles, drawBuildingIcon, inferStartingTownCenters } from "@/lib/buildings";
 import { animFrame, buildUnitPaths, unitSnapshotAt, type UnitPath } from "@/lib/units";
+import { bakeTerrainCanvas, loadTerrainTextures } from "@/lib/terrain";
 import { SpriteSet } from "@/lib/sprites";
 
 type View = {
@@ -236,6 +237,9 @@ export default function MapCanvas({
 
   const mapSize = model.meta.mapSize || 200;
   const terrainCanvas = useMemo(() => (model.terrain ? buildTerrainCanvas(model.terrain) : null), [model.terrain]);
+  // Terreno texturizado: canvas bakeado + cuántos px por tile tiene (para la
+  // matriz isométrica del frame). Null hasta que cargan las texturas.
+  const [terrainTex, setTerrainTex] = useState<{ canvas: HTMLCanvasElement; texels: number } | null>(null);
   const allBuildings = useMemo(() => {
     const inferred = inferStartingTownCenters(model);
     if (inferred.length === 0) return model.buildings;
@@ -423,6 +427,29 @@ export default function MapCanvas({
     };
   }, [model]);
 
+  // Terreno con texturas reales: baja terrain.json + las imágenes de los ids
+  // del mapa y bakea el canvas offscreen (texels px por tile; a media
+  // resolución en pantallas chicas). Mientras baja (o si falla) queda la
+  // paleta de siempre.
+  useEffect(() => {
+    const terrain = model.terrain;
+    if (!terrain) return;
+    let cancelled = false;
+    const texels = window.matchMedia("(max-width: 767px)").matches ? 16 : 32;
+    loadTerrainTextures(new Set(terrain.terrain))
+      .then((set) => {
+        if (cancelled || set.textures.size === 0) return;
+        const baked = bakeTerrainCanvas(terrain, set, texels);
+        if (baked) setTerrainTex({ canvas: baked, texels });
+      })
+      .catch(() => {
+        // Sin texturas: paleta de siempre.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [model.terrain]);
+
   // Render.
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -456,6 +483,8 @@ export default function MapCanvas({
     const sprites = spritesRef.current;
     const SPRITE_UNIT = 5;
     const spriteK = sprites ? (2 * unit) / sprites.tilePx : 0;
+    // Terreno: canvas texturizado si ya bakeó; si no, la paleta de siempre.
+    const ground = terrainTex ?? (terrainCanvas ? { canvas: terrainCanvas, texels: 1 } : null);
     const civByPlayer = new Map(model.players.map((p) => [p.id, p.civId]));
     const ageOf = (playerId: number) => {
       let age = 1;
@@ -514,18 +543,21 @@ export default function MapCanvas({
     // Rombo del mapa: con terreno real se dibuja el canvas offscreen completo
     // bajo una transform isométrica (screen = unit·(u+v) + offset en X,
     // 0.5·unit·(v-u) + offset en Y); sin terreno, el relleno plano de siempre.
-    if (terrainCanvas) {
+    // Con texturas reales el offscreen lleva `texels` px por tile: la matriz
+    // se divide por texels para que u,v vuelvan a quedar en tiles.
+    if (ground) {
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = "high";
+      const s = 1 / ground.texels;
       ctx.setTransform(
-        dpr * unit,
-        dpr * -0.5 * unit,
-        dpr * unit,
-        dpr * 0.5 * unit,
+        dpr * unit * s,
+        dpr * -0.5 * unit * s,
+        dpr * unit * s,
+        dpr * 0.5 * unit * s,
         dpr * (cx - N * unit),
         dpr * cy,
       );
-      ctx.drawImage(terrainCanvas, 0, 0);
+      ctx.drawImage(ground.canvas, 0, 0);
       ctx.imageSmoothingEnabled = false;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     } else {
@@ -727,25 +759,34 @@ export default function MapCanvas({
       ctx.lineTo(bottom.x, bottom.y - lift);
       ctx.lineTo(left.x, left.y - lift);
       ctx.closePath();
-      // Granja: parcela de tierra arada plana con borde del color del jugador,
-      // como en el juego (el prisma del color del jugador desentonaba con los
-      // edificios con sprite real).
+      // Granja: con terreno texturizado el campo arado REAL ya está en el
+      // mapa (el juego pinta terrain 7 bajo las granjas) — sólo borde del
+      // color del jugador para leer el dueño. Con paleta, parcela marrón con
+      // surcos, como siempre.
       if (isFarm) {
-        ctx.fillStyle = time - b.t < 2500 ? "#8a6a3c" : "#9c7a3c";
-        ctx.fill();
-        ctx.strokeStyle = color;
-        ctx.lineWidth = Math.max(1, unit / 16);
-        ctx.stroke();
-        ctx.strokeStyle = "rgba(60,40,20,0.35)";
-        ctx.lineWidth = 1;
-        for (let i = 1; i < 4; i++) {
-          const k2 = i / 4;
-          const a1 = { x: top.x + (left.x - top.x) * k2, y: top.y + (left.y - top.y) * k2 };
-          const a2 = { x: right.x + (bottom.x - right.x) * k2, y: right.y + (bottom.y - right.y) * k2 };
-          ctx.beginPath();
-          ctx.moveTo(a1.x, a1.y);
-          ctx.lineTo(a2.x, a2.y);
+        if (ground) {
+          ctx.strokeStyle = color;
+          ctx.globalAlpha = 0.55;
+          ctx.lineWidth = Math.max(1, unit / 16);
           ctx.stroke();
+          ctx.globalAlpha = 1;
+        } else {
+          ctx.fillStyle = time - b.t < 2500 ? "#8a6a3c" : "#9c7a3c";
+          ctx.fill();
+          ctx.strokeStyle = color;
+          ctx.lineWidth = Math.max(1, unit / 16);
+          ctx.stroke();
+          ctx.strokeStyle = "rgba(60,40,20,0.35)";
+          ctx.lineWidth = 1;
+          for (let i = 1; i < 4; i++) {
+            const k2 = i / 4;
+            const a1 = { x: top.x + (left.x - top.x) * k2, y: top.y + (left.y - top.y) * k2 };
+            const a2 = { x: right.x + (bottom.x - right.x) * k2, y: right.y + (bottom.y - right.y) * k2 };
+            ctx.beginPath();
+            ctx.moveTo(a1.x, a1.y);
+            ctx.lineTo(a2.x, a2.y);
+            ctx.stroke();
+          }
         }
       } else {
         ctx.fillStyle = shade(color, 1.05);
@@ -909,7 +950,7 @@ export default function MapCanvas({
     // Presupuesto de memoria de atlas: libera páginas que hace rato no se
     // dibujan (LRU) cuando el total decodificado pasa el tope.
     sprites?.endFrame();
-  }, [model, time, size, mapSize, zoomPct, tick, heatmap, terrainCanvas, allBuildings, unitPaths]);
+  }, [model, time, size, mapSize, zoomPct, tick, heatmap, terrainCanvas, allBuildings, unitPaths, terrainTex]);
 
   // Pinch-zoom táctil: 2 dedos escalan alrededor de su punto medio (además
   // siguen pan-eando con el desplazamiento del medio). Mismo encuadre que el
