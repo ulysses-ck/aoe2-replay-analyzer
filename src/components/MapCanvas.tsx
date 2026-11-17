@@ -484,10 +484,12 @@ export default function MapCanvas({
         if (key == null) continue;
         const frame = sprites.frame(keyOf(key));
         if (!frame) continue;
-        // Los offsets de anexos (TC) están en el eje del juego: entran
-        // rotados como (dy, -dx), igual que en el visor de referencia.
-        const sx = px(b.x + dy, b.y - dx);
-        const sy = py(b.x + dy, b.y - dx);
+        // Los offsets de anexos (TC) están en tiles del juego y nuestras
+        // coordenadas NO vienen rotadas (a diferencia del visor de referencia,
+        // que gira todo el replay con (x,y)→(y,n−x) y por eso aplica
+        // (dy,−dx)): acá entran directos.
+        const sx = px(b.x + dx, b.y + dy);
+        const sy = py(b.x + dx, b.y + dy);
         const x = sx + (ox - frame.ax) * spriteK;
         const y = sy + (oy - frame.ay) * spriteK;
         const w = frame.w * spriteK;
@@ -650,12 +652,15 @@ export default function MapCanvas({
       .filter((b) => b.t <= time && (b.objectId === 0 || time < (deleteAt.get(b.objectId) ?? Infinity)))
       .sort(
         (a, b) =>
-          // Profundidad isométrica por la esquina cercana del bloque de tiles
-          // (x + y + side): dibuja de atrás hacia adelante. A igual profundidad
-          // gana el más alto (su techo ocluye al vecino bajo, como en el juego:
-          // el TC tapa la granja pegada al NE).
-          a.x + a.y + getBuildingTiles(a.typeId) - (b.x + b.y + getBuildingTiles(b.typeId)) ||
-          getBuildingInfo(b.typeId).liftFactor - getBuildingInfo(a.typeId).liftFactor,
+          // Profundidad isométrica: la cámara mira desde el sur, así que la
+          // distancia a la cámara es (y − x), NO (x + y) — eso era la
+          // coordenada horizontal en pantalla y por eso las casas contiguas
+          // se ocluían al revés. + tiles/2 centra el rango de la huella (igual
+          // que el visor de referencia: bd.x + bd.y + bd.size/2 en coordenadas
+          // rotadas ≡ (y − x) + size/2 en las del juego). A igual profundidad
+          // gana el más alto (su techo ocluye al vecino bajo).
+          b.x - a.x + (a.y - b.y) + getBuildingTiles(a.typeId) / 2 - getBuildingTiles(b.typeId) / 2 ||
+          getBuildingInfo(a.typeId).liftFactor - getBuildingInfo(b.typeId).liftFactor,
       );
 
     for (const b of visibleBuildings) {
