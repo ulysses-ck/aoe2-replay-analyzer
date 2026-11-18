@@ -132,6 +132,18 @@ export type TerrainModel = {
   elevation: number[];
 };
 
+/** Objeto gaia inicial del mapa (oro, piedra, reliquias, bayas, árboles, etc.). */
+export type GaiaObject = {
+  x: number;
+  y: number;
+  /** Id de tipo de objeto/unidad de DE (66=oro, 102=piedra, 285=reliquia, …). */
+  typeId: number;
+  /** Clase de objeto según el header (10=recurso, 20=árbol, 70=entidad, 80=edificio, …). */
+  classId: number;
+  /** Dueño (0 = gaia en general). */
+  player: number;
+};
+
 export type ReplayModel = {
   meta: {
     fileName: string;
@@ -170,6 +182,8 @@ export type ReplayModel = {
   buildingDamage?: DamageEvent[];
   /** Terreno real del mapa; falta si la cabecera no se pudo leer. */
   terrain?: TerrainModel;
+  /** Objetos gaia iniciales (recursos, reliquias, árboles); falta si no se pudieron leer. */
+  gaiaObjects?: GaiaObject[];
 };
 
 /** Paleta de colores de jugador de AoE2 DE, indexada por `color_id`. */

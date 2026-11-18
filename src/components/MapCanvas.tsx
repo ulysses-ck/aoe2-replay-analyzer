@@ -6,6 +6,37 @@ import { playerColor, type ReplayModel, type BuildingEvent } from "@/lib/types";
 import { getBuildingInfo, getBuildingTiles, drawBuildingIcon, inferStartingTownCenters } from "@/lib/buildings";
 import { animFrame, buildUnitPaths, unitSnapshotAt, type UnitPath } from "@/lib/units";
 import { bakeTerrainCanvas, loadTerrainTextures } from "@/lib/terrain";
+import type { GaiaObject } from "@/lib/types";
+
+type GaiaKind = "gold" | "stone" | "relic" | "berry" | "tree" | "other";
+type GaiaDraw = { x: number; y: number; d: number; kind: GaiaKind };
+
+const GOLD_IDS = new Set([66]);
+const STONE_IDS = new Set([102]);
+const RELIC_IDS = new Set([285, 688]);
+const BERRY_IDS = new Set([59, 1059, 1021, 1022, 1023, 1024, 1025, 1026, 1027, 1028, 1029, 1030, 1031, 1032]);
+
+function prepareGaia(objects?: GaiaObject[]): GaiaDraw[] {
+  if (!objects?.length) return [];
+  const out: GaiaDraw[] = [];
+  for (const o of objects) {
+    if (o.player !== 0) continue;
+    const { typeId, classId, x, y } = o;
+    let kind: GaiaKind | null = null;
+    if (RELIC_IDS.has(typeId)) kind = "relic";
+    else if (GOLD_IDS.has(typeId)) kind = "gold";
+    else if (STONE_IDS.has(typeId)) kind = "stone";
+    else if (BERRY_IDS.has(typeId)) kind = "berry";
+    else if (classId === 20) kind = "tree";
+    // Recursos/animales gaia menores (ciervos, jabalíes, ovejas, etc.) se
+    // omiten por ahora para no saturar: el pedido explícito fue
+    // reliquias/oro/árboles/piedra (y bayas).
+    if (!kind) continue;
+    out.push({ x, y, d: y - x, kind });
+  }
+  out.sort((a, b) => a.d - b.d);
+  return out;
+}
 import { SpriteSet } from "@/lib/sprites";
 
 type View = {
@@ -240,6 +271,7 @@ export default function MapCanvas({
   // Terreno texturizado: canvas bakeado + cuántos px por tile tiene (para la
   // matriz isométrica del frame). Null hasta que cargan las texturas.
   const [terrainTex, setTerrainTex] = useState<{ canvas: HTMLCanvasElement; texels: number } | null>(null);
+  const gaiaDraw = useMemo(() => prepareGaia(model.gaiaObjects), [model.gaiaObjects]);
   const allBuildings = useMemo(() => {
     const inferred = inferStartingTownCenters(model);
     if (inferred.length === 0) return model.buildings;
@@ -819,6 +851,81 @@ export default function MapCanvas({
       }
     };
 
+    // Objetos gaia iniciales (oro, piedra, reliquias, bayas, árboles) sobre el
+    // terreno. Se dibujan antes que edificios/unidades para que el painter's
+    // algorithm los tape cuando corresponda. Marcadores vectoriales livianos
+    // (sin sprites dedicados de recursos en el atlas actual).
+    if (gaiaDraw.length) {
+      const margin = 40;
+      for (const g of gaiaDraw) {
+        // A vista muy lejana los árboles individuales son ruido (el bosque ya
+        // se ve por la textura de terreno); recursos/reliquias sí se mantienen.
+        if (g.kind === "tree" && unit < 2.2) continue;
+        const sx = px(g.x, g.y);
+        const sy = py(g.x, g.y);
+        if (sx < -margin || sx > size.w + margin || sy < -margin || sy > size.h + margin) continue;
+
+        if (g.kind === "gold") {
+          const r = Math.max(1.6, unit * 0.28);
+          ctx.fillStyle = "#f2c230";
+          ctx.strokeStyle = "rgba(80,50,10,0.55)";
+          ctx.lineWidth = Math.max(0.75, unit * 0.05);
+          ctx.beginPath();
+          ctx.moveTo(sx, sy - r);
+          ctx.lineTo(sx + r * 1.15, sy);
+          ctx.lineTo(sx, sy + r * 0.7);
+          ctx.lineTo(sx - r * 1.15, sy);
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+        } else if (g.kind === "stone") {
+          const r = Math.max(1.5, unit * 0.26);
+          ctx.fillStyle = "#9aa3ad";
+          ctx.strokeStyle = "rgba(30,35,40,0.5)";
+          ctx.lineWidth = Math.max(0.75, unit * 0.05);
+          ctx.beginPath();
+          ctx.moveTo(sx - r, sy + r * 0.3);
+          ctx.lineTo(sx - r * 0.2, sy - r * 0.7);
+          ctx.lineTo(sx + r * 0.9, sy - r * 0.1);
+          ctx.lineTo(sx + r * 0.7, sy + r * 0.5);
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+        } else if (g.kind === "relic") {
+          const r = Math.max(2, unit * 0.32);
+          ctx.strokeStyle = "#f7f3e8";
+          ctx.fillStyle = "rgba(255,255,255,0.22)";
+          ctx.lineWidth = Math.max(1, unit * 0.08);
+          ctx.beginPath();
+          ctx.arc(sx, sy - r * 0.1, r, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(sx, sy - r * 1.2);
+          ctx.lineTo(sx, sy + r * 0.7);
+          ctx.moveTo(sx - r * 0.55, sy - r * 0.45);
+          ctx.lineTo(sx + r * 0.55, sy - r * 0.45);
+          ctx.stroke();
+        } else if (g.kind === "berry") {
+          const r = Math.max(1.2, unit * 0.2);
+          ctx.fillStyle = "#a3364a";
+          ctx.beginPath();
+          ctx.arc(sx, sy, r, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = "rgba(255,180,190,0.5)";
+          ctx.beginPath();
+          ctx.arc(sx - r * 0.25, sy - r * 0.25, r * 0.35, 0, Math.PI * 2);
+          ctx.fill();
+        } else if (g.kind === "tree") {
+          const r = Math.max(1.1, unit * 0.22);
+          ctx.fillStyle = "rgba(34, 90, 38, 0.75)";
+          ctx.beginPath();
+          ctx.arc(sx, sy - r * 0.2, r, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+
     // Capas del pintor isométrico: edificios y unidades en una sola lista
     // ordenada por profundidad (y − x) — las unidades tienen que quedar
     // intercaladas entre los edificios, no encima de todo.
@@ -950,7 +1057,7 @@ export default function MapCanvas({
     // Presupuesto de memoria de atlas: libera páginas que hace rato no se
     // dibujan (LRU) cuando el total decodificado pasa el tope.
     sprites?.endFrame();
-  }, [model, time, size, mapSize, zoomPct, tick, heatmap, terrainCanvas, allBuildings, unitPaths, terrainTex]);
+  }, [model, time, size, mapSize, zoomPct, tick, heatmap, terrainCanvas, allBuildings, unitPaths, terrainTex, gaiaDraw]);
 
   // Pinch-zoom táctil: 2 dedos escalan alrededor de su punto medio (además
   // siguen pan-eando con el desplazamiento del medio). Mismo encuadre que el

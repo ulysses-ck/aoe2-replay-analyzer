@@ -553,20 +553,30 @@ function parseWithAgelens(recording, fileName) {
   };
 }
 
-// ─────────────────────────── terreno ───────────────────────────
+// ─────────────────────────── terreno y objetos gaia ───────────────────────────
 
 /**
- * Tiles del mapa desde la cabecera de agelens.
+ * Terreno y objetos iniciales (gaia: oro, piedra, reliquias, bayas, árboles,
+ * animales) desde la cabecera DE.
  *
- * Se corre concurrente con el parse principal (parseHeader sólo lee la
- * cabecera, ~1.5-5 s) así el terreno está disponible en ambos motores. La
- * orientación está verificada empíricamente contra los edificios del body
- * (`scripts/probe-tile-order3.mjs`): el índice es `y * dimension + x`, sin flip
- * — las hipótesis alternativas caen un 25-28% de edificios sobre agua/bosque
- * contra ~12% con ésta (el resto son docks y tala posterior al inicio).
+ * El layout de registros de objetos varía entre builds; en builds recientes
+ * (p.ej. save 68 / 180059) agelens devuelve posiciones basura. Acá se escanean
+ * los bloques de objetos del header descomprimido (marker
+ * 0b 00 XX 00 00 00 02 00 00, XX==8) y se decodifica con el layout empírico
+ * observado: class@0, player@1, objectId@2(u16), instanceId@18(u32),
+ * x@23(f32), y@27(f32). Anclado contra TCs conocidos del replay.
+ *
+ * Se corre concurrente con el motor principal (parseHeader sólo lee la
+ * cabecera, ~1.5-5 s).
  */
-async function extractTerrain(buffer) {
+async function extractHeaderExtras(buffer) {
   const header = await parseHeader(new Uint8Array(buffer));
+  const terrain = terrainFromHeader(header);
+  const gaiaObjects = gaiaObjectsFromHeader(header);
+  return { terrain, gaiaObjects };
+}
+
+function terrainFromHeader(header) {
   const tiles = header?.map?.tiles;
   if (!Array.isArray(tiles) || tiles.length === 0) return undefined;
   const dimension = Number(header.map.dimension) || 0;
@@ -593,6 +603,59 @@ function terrainFromRecording(recording) {
     elevation[i] = tiles[i].elevation | 0;
   }
   return { dimension, terrain, elevation };
+}
+
+function gaiaObjectsFromHeader(header) {
+  const rawHex = header?.raw?.data;
+  if (!rawHex || header?.raw?.encoding !== "hex") return undefined;
+  const raw = Buffer.from(rawHex, "hex");
+  const dim = Number(header?.map?.dimension) || 0;
+  if (!dim || raw.length < 64) return undefined;
+
+  const CLASSES = new Set([0x0a, 0x1e, 0x46, 0x50, 0x14]);
+  const out = [];
+  const seen = new Set();
+
+  for (let pos = 0; pos < raw.length - 9; pos += 1) {
+    if (
+      raw[pos] !== 0x0b ||
+      raw[pos + 1] !== 0x00 ||
+      raw[pos + 2] !== 8 ||
+      raw[pos + 3] !== 0x00 ||
+      raw[pos + 4] !== 0x00 ||
+      raw[pos + 5] !== 0x00 ||
+      raw[pos + 6] !== 0x02 ||
+      raw[pos + 7] !== 0x00 ||
+      raw[pos + 8] !== 0x00
+    ) {
+      continue;
+    }
+    const base = pos + 9;
+    const limit = Math.min(base + 250000, raw.length - 32);
+    for (let i = base; i < limit; i += 1) {
+      const cls = raw[i];
+      if (!CLASSES.has(cls)) continue;
+      const player = raw[i + 1];
+      if (player > 8) continue;
+      const typeId = raw.readUInt16LE(i + 2);
+      const instanceId = raw.readUInt32LE(i + 18);
+      if (instanceId === 0 || instanceId === 0xffffffff) continue;
+      const x = raw.readFloatLE(i + 23);
+      const y = raw.readFloatLE(i + 27);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+      if (x < 0 || x > dim || y < 0 || y > dim) continue;
+      // Dedupe por instancia: el scan byte a byte puede re-matchear dentro
+      // del mismo registro; saltar un tramo mínimo reduce trabajo.
+      if (seen.has(instanceId)) {
+        i += 30;
+        continue;
+      }
+      seen.add(instanceId);
+      out.push({ x, y, typeId, classId: cls, player });
+      i += 30;
+    }
+  }
+  return out.length ? out : undefined;
 }
 
 // ─────────────────────────── detección de highlights ───────────────────────────
@@ -716,12 +779,14 @@ async function run() {
   process.stderr.write = () => true;
 
   try {
-    // El terreno se parsea concurrente con el motor principal: sólo lee la
-    // cabecera y no depende de si aoe2rec revienta o no.
-    const terrainPromise = extractTerrain(buffer).catch(() => undefined);
+    // Terreno y objetos gaia se parsean concurrentes con el motor principal:
+    // sólo leen la cabecera y no dependen de si aoe2rec revienta o no.
+    const extrasPromise = extractHeaderExtras(buffer).catch(() => ({ terrain: undefined, gaiaObjects: undefined }));
     try {
       const model = parseWithAoe2rec(buffer, fileName);
-      model.terrain = await terrainPromise;
+      const extras = await extrasPromise;
+      model.terrain = extras.terrain;
+      model.gaiaObjects = extras.gaiaObjects;
       return { ok: true, model };
     } catch (error) {
       // El trap de WASM no dice mucho; queda como intento fallido.
@@ -729,7 +794,9 @@ async function run() {
       try {
         const recording = await parseRecording(new Uint8Array(buffer));
         const model = parseWithAgelens(recording, fileName);
-        model.terrain = terrainFromRecording(recording) ?? (await terrainPromise);
+        const extras = await extrasPromise;
+        model.terrain = terrainFromRecording(recording) ?? extras.terrain;
+        model.gaiaObjects = extras.gaiaObjects;
         return { ok: true, model, fallbackReason: primary };
       } catch (fallbackError) {
         return {

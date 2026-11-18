@@ -10,7 +10,7 @@ import { createHash } from "node:crypto";
  * (`src/lib/storage.ts`); la metadata en la DB (`src/lib/db.ts`).
  */
 const ID_LENGTH = 16;
-const MODEL_VERSION = "6-units";
+const MODEL_VERSION = "7-gaia";
 
 export function replayId(buffer: ArrayBuffer): string {
   return createHash("sha256")
